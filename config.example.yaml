@@ -1,0 +1,48 @@
+feeds:
+  - name: "Hacker News Best"
+    url: "https://hnrss.org/best"
+    enabled: true
+    tags: ["tech", "ai", "hackernews"]
+    limit: 20
+  
+  - name: "TechCrunch"
+    url: "https://techcrunch.com/feed/"
+    enabled: true
+    tags: ["tech", "startup"]
+    limit: 10
+  
+  - name: "VentureBeat AI"
+    url: "https://venturebeat.com/feed/"
+    enabled: true
+    tags: ["ai", "business"]
+    limit: 10
+  
+  - name: "OpenAI Blog"
+    url: "https://openai.com/blog/rss.xml"
+    enabled: true
+    tags: ["ai", "openai"]
+    limit: 5
+
+filters:
+  min_score: null
+  keywords_include: []
+  keywords_exclude: []
+  time_range_hours: null
+  sources: []
+
+search:
+  fuzzy: true
+  case_sensitive: false
+  max_results: 50
+
+ai:
+  enabled: true
+  model: "MiniMax-M2.5"
+  temperature: 0.7
+  max_tokens: 2048
+  custom_prompt: null
+
+output:
+  format: json
+  pretty: true
+  include_summary: true

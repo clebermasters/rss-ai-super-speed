@@ -1,0 +1,36 @@
+[package]
+name = "rss-ai"
+version = "0.1.0"
+edition = "2021"
+description = "Modular RSS AI Aggregator with filters, fuzzy search, and AI summarization"
+authors = ["kiro-bot"]
+license = "MIT"
+
+[dependencies]
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+feed-rs = "0.6"
+clap = { version = "4.0", features = ["derive"] }
+dotenv = "0.15"
+fuzzy-matcher = "0.3"
+chrono = { version = "0.4", features = ["serde"] }
+url = "2.5"
+thiserror = "1.0"
+async-trait = "0.1"
+serde_yaml = "0.9"
+rusqlite = { version = "0.32", features = ["bundled"] }
+base64 = "0.22"
+
+[lib]
+name = "rss_ai"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rss-ai"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true

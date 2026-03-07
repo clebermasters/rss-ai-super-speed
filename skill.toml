@@ -1,0 +1,45 @@
+[skill]
+name = "rss-ai"
+version = "0.3.0"
+description = "Modular RSS feed aggregator with AI summarization, filters, fuzzy search, SQLite database, vector semantic search, and AI-powered full article extraction."
+author = "kiro-bot"
+tags = [
+    "rss",
+    "ai",
+    "news",
+    "aggregator",
+    "summarization",
+    "database",
+    "vector-search",
+]
+
+[runtime]
+type = "executable"
+entry = "./target/release/rss-ai"
+
+[tools]
+provided = [
+    "rss-fetch",
+    "rss-summarize",
+    "rss-search",
+    "rss-unread",
+    "rss-saved",
+    "rss-mark-read",
+    "rss-save",
+    "rss-sync",
+    "rss-stats",
+    "rss-fetch-full",
+    "rss-open",
+    "rss-semantic-search",
+]
+
+[requirements]
+environment = ["MINIMAX_API_KEY"]
+
+[config]
+default_feeds = [
+    "https://hnrss.org/best",
+    "https://techcrunch.com/feed/",
+    "https://venturebeat.com/feed/",
+]
+default_model = "MiniMax-M2.5"

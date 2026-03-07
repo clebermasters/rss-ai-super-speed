@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub mod fetcher;
+pub mod fetcher_html;
 pub mod filter;
 pub mod search;
 pub mod summarizer;
@@ -11,6 +12,7 @@ pub mod vector;
 
 // Re-export types for convenience
 pub use fetcher::FeedFetcher;
+pub use fetcher_html::{ArticleFetcher, ArticleContent};
 pub use filter::ArticleFilter;
 pub use search::ArticleSearch;
 pub use summarizer::AiSummarizer;

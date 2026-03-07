@@ -22,6 +22,8 @@ async-trait = "0.1"
 serde_yaml = "0.9"
 rusqlite = { version = "0.32", features = ["bundled"] }
 base64 = "0.22"
+soup = "0.5"
+regex = "1.0"
 
 [lib]
 name = "rss_ai"

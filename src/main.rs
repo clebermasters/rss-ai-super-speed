@@ -3,7 +3,7 @@ use rss_ai::{
     get_default_config, AiConfig, Article, ArticleFilter, ArticleSearch, Config, 
     FeedFetcher, FilterConfig, OutputConfig, SearchConfig, Database,
     summarizer::AiSummarizer, output::OutputFormatter, database::DbArticleFilter,
-    VectorStore,
+    VectorStore, ArticleFetcher, ArticleContent,
 };
 
 #[derive(Parser, Debug)]
@@ -365,26 +365,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
-        println!("Fetching article content...\n");
+        println!("Fetching article content with Rust (soup + MiniMax)...\n");
 
-        let api_key = std::env::var("MINIMAX_API_KEY").unwrap_or_default();
-        
-        let output = std::process::Command::new("python3")
-            .arg("/home/cleber_rodrigues/kiro-bot/.opencode/skills/rss-ai/scripts/fetch_article.py")
-            .arg(&url)
-            .env("MINIMAX_API_KEY", api_key)
-            .output();
-
-        match output {
-            Ok(out) => {
-                if out.status.success() {
-                    println!("{}", String::from_utf8_lossy(&out.stdout));
-                } else {
-                    eprintln!("Error: {}", String::from_utf8_lossy(&out.stderr));
+        let api_key = std::env::var("MINIMAX_API_KEY").unwrap_or_else(|_| {
+            // Try to read from .env file
+            if let Ok(content) = std::fs::read_to_string("/home/cleber_rodrigues/kiro-bot/.opencode/skills/rss-ai/.env") {
+                for line in content.lines() {
+                    if let Some((key, value)) = line.split_once('=') {
+                        if key.trim() == "MINIMAX_API_KEY" {
+                            return value.trim().to_string();
+                        }
+                    }
                 }
             }
+            String::new()
+        });
+
+        if api_key.is_empty() {
+            println!("Error: MINIMAX_API_KEY not set");
+            return Ok(());
+        }
+
+        let fetcher = ArticleFetcher::new();
+        match fetcher.fetch_and_summarize(&url, &api_key).await {
+            Ok(article) => {
+                println!("{}", article);
+            }
             Err(e) => {
-                eprintln!("Failed to run fetch script: {}", e);
+                eprintln!("Error fetching article: {}", e);
             }
         }
         return Ok(());

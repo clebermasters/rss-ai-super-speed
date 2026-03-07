@@ -82,6 +82,7 @@ export as CSV
 | `--stats` | Show article statistics |
 | `--fetch-full <id>` | Fetch full article content (AI) |
 | `--open <id>` | Open article in browser |
+| `--force-browser` | Use browser when blocked (Cloudflare) |
 
 ## Environment Variables
 

@@ -28,6 +28,11 @@ impl ArticleFetcher {
         let response = self.client.get(url).send().await?;
         let html = response.text().await?;
 
+        // Check if blocked by Cloudflare or similar
+        if Self::is_blocked(&html) {
+            return Err(FetchError::Parse("BLOCKED".to_string()));
+        }
+
         let soup = Soup::new(&html);
 
         // Try to find article content
@@ -49,6 +54,23 @@ impl ArticleFetcher {
         
         let cleaned = lines.join("\n");
         Ok(cleaned)
+    }
+
+    pub fn is_blocked(html: &str) -> bool {
+        let blocked_patterns = [
+            "verifying your browser",
+            "cloudflare",
+            "checking your browser",
+            "please wait",
+            "ddos-guard",
+            "incapsula",
+            "security check",
+            "captcha",
+            "access denied",
+        ];
+        
+        let html_lower = html.to_lowercase();
+        blocked_patterns.iter().any(|pattern| html_lower.contains(pattern))
     }
 
     pub async fn fetch_and_summarize(&self, url: &str, api_key: &str) -> Result<ArticleContent, FetchError> {

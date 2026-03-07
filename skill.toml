@@ -1,7 +1,7 @@
 [skill]
 name = "rss-ai"
-version = "0.3.0"
-description = "Modular RSS feed aggregator with AI summarization, filters, fuzzy search, SQLite database, vector semantic search, and AI-powered full article extraction."
+version = "0.4.0"
+description = "Modular RSS feed aggregator with AI summarization, filters, fuzzy search, SQLite database, vector semantic search, AI-powered full article extraction, and Cloudflare bypass with browser automation."
 author = "kiro-bot"
 tags = [
     "rss",

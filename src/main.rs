@@ -153,6 +153,10 @@ struct Args {
     /// Open article URL in browser
     #[arg(long, value_name = "ID or URL")]
     open: Option<String>,
+
+    /// Use browser automation when content is blocked (Cloudflare, etc)
+    #[arg(long)]
+    force_browser: bool,
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -348,12 +352,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Handle fetch-full (get full article content)
     if let Some(id_or_url) = &args.fetch_full {
-        let url = if id_or_url.starts_with("http") {
-            id_or_url.clone()
+        let (url, article_id) = if id_or_url.starts_with("http") {
+            (id_or_url.clone(), None)
         } else {
             // It's an article ID, look up the URL
             match db.get_article_by_id(id_or_url) {
-                Ok(Some(article)) => article.link,
+                Ok(Some(article)) => (article.link, Some(id_or_url.clone())),
                 Ok(None) => {
                     println!("Article {} not found", id_or_url);
                     return Ok(());
@@ -390,9 +394,95 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match fetcher.fetch_and_summarize(&url, &api_key).await {
             Ok(article) => {
                 println!("{}", article);
+                
+                // Auto-mark as read if we have an article ID
+                if let Some(ref id) = article_id {
+                    if let Err(e) = db.mark_read(id) {
+                        eprintln!("Warning: Could not mark article as read: {}", e);
+                    } else {
+                        println!("\n[Marked as read]");
+                    }
+                }
             }
             Err(e) => {
-                eprintln!("Error fetching article: {}", e);
+                let error_msg = e.to_string();
+                
+                // Check if blocked and force_browser is enabled
+                if error_msg.contains("BLOCKED") && args.force_browser {
+                    println!("Content blocked. Using browser automation...\n");
+                    
+                    // Use agent-browser to get content
+                    let output = std::process::Command::new("agent-browser")
+                        .args(["open", &url])
+                        .output();
+                    
+                    if output.is_err() || !output.as_ref().map(|o| o.status.success()).unwrap_or(false) {
+                        eprintln!("Error: Could not open browser");
+                        return Ok(());
+                    }
+                    
+                    // Get page text
+                    let text_output = std::process::Command::new("agent-browser")
+                        .args(["get", "text", "body"])
+                        .output();
+                    
+                    if let Ok(out) = text_output {
+                        if out.status.success() {
+                            let content = String::from_utf8_lossy(&out.stdout);
+                            
+                            // Now use MiniMax to extract
+                            let api_key = std::env::var("MINIMAX_API_KEY").unwrap_or_else(|_| String::new());
+                            if api_key.is_empty() {
+                                // Just print raw content
+                                println!("# Article Content\n\n**Source:** {}\n\n---\n\n{}", url, content);
+                            } else {
+                                // Use MiniMax to clean
+                                let fetcher = rss_ai::ArticleFetcher::new();
+                                match fetcher.fetch_and_summarize(&url, &api_key).await {
+                                    Ok(article) => {
+                                        println!("{}", article);
+                                        
+                                        if let Some(ref id) = article_id {
+                                            db.mark_read(id).ok();
+                                            println!("\n[Marked as read]");
+                                        }
+                                    }
+                                    Err(_) => {
+                                        println!("# Article Content\n\n**Source:** {}\n\n---\n\n{}", url, content);
+                                    }
+                                }
+                            }
+                            
+                            // Close browser
+                            std::process::Command::new("agent-browser")
+                                .arg("close")
+                                .spawn()
+                                .ok();
+                            
+                            return Ok(());
+                        }
+                    }
+                    
+                    // Try screenshot instead
+                    std::process::Command::new("agent-browser")
+                        .arg("close")
+                        .spawn()
+                        .ok();
+                    
+                    eprintln!("Could not extract content from browser");
+                    return Ok(());
+                }
+                
+                if error_msg.contains("BLOCKED") {
+                    println!("⚠️  Content blocked by Cloudflare or similar protection.");
+                    println!("   The site requires browser verification.");
+                    println!("\n   To auto-fetch using browser automation, run with:");
+                    println!("   rss-ai --fetch-full <id> --force-browser");
+                    println!("\n   Or open directly in your browser:");
+                    println!("   rss-ai --open {}", url);
+                } else {
+                    eprintln!("Error fetching article: {}", e);
+                }
             }
         }
         return Ok(());

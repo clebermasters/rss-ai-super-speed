@@ -70,6 +70,7 @@ echo "MINIMAX_API_KEY=your_key" > .env
 | `--rebuild-index` | Clear vector index |
 | `--fetch-full <id or url>` | Fetch full article content (AI-powered) |
 | `--open <id or url>` | Open article in browser |
+| `--force-browser` | Use browser automation when blocked (Cloudflare) |
 
 ## Examples
 
@@ -147,6 +148,9 @@ echo "MINIMAX_API_KEY=your_key" > .env
 
 # Open article in browser
 ./target/release/rss-ai --open <article-id>
+
+# Use browser automation when blocked (Cloudflare)
+./target/release/rss-ai --fetch-full <article-id> --force-browser
 ```
 
 ## Config File
@@ -219,9 +223,13 @@ output:
 - Full article extraction using MiniMax-M2.5
 - Fetches page + AI cleans/structures content
 - Outputs clean markdown
+- Auto-detects Cloudflare blocks
+- Uses browser automation (agent-browser) when blocked
+- Auto-marks as read after fetching
 
 ### Browser Integration
 - Open articles directly in default browser
+- `--force-browser` flag bypasses Cloudflare protection
 
 ### Output Formats
 - JSON (default)

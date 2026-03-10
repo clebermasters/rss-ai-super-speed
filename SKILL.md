@@ -48,7 +48,7 @@ echo "MINIMAX_API_KEY=your_key" > .env
 | `--sources` | Filter by sources (comma-separated) |
 | `--hours` | Filter by time range (hours) |
 | `--summarize, -S` | Enable AI summarization |
-| `--model` | AI model (default: MiniMax-M2.5) |
+| `--model` | AI model (default: MiniMax-M2.5-highspeed) |
 | `--prompt` | Custom AI prompt |
 | `--format` | Output format: json, markdown, html, csv |
 | `--output, -o` | Output file path |
@@ -97,7 +97,7 @@ echo "MINIMAX_API_KEY=your_key" > .env
 ```bash
 ./target/release/rss-ai \
   --summarize \
-  --model "MiniMax-M2.5-Lightning" \
+  --model "MiniMax-M2.5-highspeed-Lightning" \
   --prompt "Summarize and identify investment opportunities" \
   --format markdown
 ```
@@ -185,7 +185,7 @@ search:
 
 ai:
   enabled: true
-  model: "MiniMax-M2.5"
+  model: "MiniMax-M2.5-highspeed"
   temperature: 0.7
   max_tokens: 2048
   custom_prompt: null
@@ -220,7 +220,7 @@ output:
 - Local embeddings stored in SQLite
 
 ### AI Content Extraction
-- Full article extraction using MiniMax-M2.5
+- Full article extraction using MiniMax-M2.5-highspeed
 - Fetches page + AI cleans/structures content
 - Outputs clean markdown
 - Auto-detects Cloudflare blocks

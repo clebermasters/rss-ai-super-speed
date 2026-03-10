@@ -68,7 +68,7 @@ Return as JSON with:
 - "content": The main article paragraphs (not navigation, ads, etc)"""
 
         payload = {
-            "model": "MiniMax-M2.5",
+            "model": "MiniMax-M2.5-highspeed",
             "messages": [
                 {
                     "role": "system",
@@ -147,7 +147,7 @@ def main():
     parser.add_argument("--plain", "-p", action="store_true", help="Plain text output")
     args = parser.parse_args()
 
-    print("Fetching with AI extraction (MiniMax-M2.5)...\n")
+    print("Fetching with AI extraction (MiniMax-M2.5-highspeed)...\n")
 
     article = fetch_article_ai(args.url)
 

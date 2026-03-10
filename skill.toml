@@ -42,4 +42,4 @@ default_feeds = [
     "https://techcrunch.com/feed/",
     "https://venturebeat.com/feed/",
 ]
-default_model = "MiniMax-M2.5"
+default_model = "MiniMax-M2.5-highspeed"

@@ -152,7 +152,7 @@ impl Default for AiConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            model: "MiniMax-M2.5".to_string(),
+            model: "MiniMax-M2.5-highspeed".to_string(),
             temperature: 0.7,
             max_tokens: 2048,
             custom_prompt: None,

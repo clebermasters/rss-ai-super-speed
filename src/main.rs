@@ -55,7 +55,7 @@ struct Args {
     summarize: bool,
 
     /// AI model to use
-    #[arg(long, default_value = "MiniMax-M2.5")]
+    #[arg(long, default_value = "MiniMax-M2.5-highspeed")]
     model: String,
 
     /// Custom AI prompt

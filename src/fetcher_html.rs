@@ -92,7 +92,7 @@ Return as JSON with:
         );
 
         let payload = serde_json::json!({
-            "model": "MiniMax-M2.5",
+            "model": "MiniMax-M2.5-highspeed",
             "messages": [
                 {"role": "system", "content": "You extract article content from web pages. Return valid JSON only."},
                 {"role": "user", "content": prompt}

@@ -1,17 +1,19 @@
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 use rss_ai::{
-    get_default_config, AiConfig, Article, ArticleFilter, ArticleSearch, Config, 
+    get_default_config, AiConfig, Article, ArticleFilter, ArticleSearch, Config,
     FeedFetcher, FilterConfig, OutputConfig, SearchConfig, Database,
     summarizer::AiSummarizer, output::OutputFormatter, database::DbArticleFilter,
-    VectorStore, ArticleFetcher, ArticleContent,
+    VectorStore, ArticleFetcher,
 };
 
 #[derive(Parser, Debug)]
 #[command(name = "rss-ai")]
 #[command(about = "Modular RSS AI Aggregator with filters, fuzzy search, and AI summarization", long_about = None)]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Commands>,
     /// RSS feed URLs (can be specified multiple times)
-    #[arg(short, long, value_name = "URL")]
+    #[arg(long, value_name = "URL")]
     feeds: Vec<String>,
 
     /// Config file (YAML)
@@ -27,7 +29,7 @@ struct Args {
     search: Option<String>,
 
     /// Use fuzzy search (default: exact)
-    #[arg(short = 'f', long)]
+    #[arg(long)]
     fuzzy: bool,
 
     /// Filter by minimum score
@@ -51,7 +53,7 @@ struct Args {
     hours: Option<i64>,
 
     /// Enable AI summarization
-    #[arg(short, long)]
+    #[arg(long)]
     summarize: bool,
 
     /// AI model to use
@@ -157,6 +159,21 @@ struct Args {
     /// Use browser automation when content is blocked (Cloudflare, etc)
     #[arg(long)]
     force_browser: bool,
+
+    /// Test content fetch strategies against a URL and report which worked
+    #[arg(long, value_name = "URL")]
+    test_fetch: Option<String>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Launch the interactive TUI reader
+    #[cfg(feature = "tui")]
+    Tui {
+        /// Database file path (default: ~/.rss-ai/rss-ai.db)
+        #[arg(long)]
+        db: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -178,22 +195,25 @@ impl From<OutputFormatArg> for rss_ai::OutputFormat {
     }
 }
 
-use std::env;
-use std::fs;
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Load .env file
-    let env_path = "/home/cleber_rodrigues/kiro-bot/.opencode/skills/rss-ai/.env";
-    if let Ok(content) = fs::read_to_string(env_path) {
-        for line in content.lines() {
-            if let Some((key, value)) = line.split_once('=') {
-                env::set_var(key.trim(), value.trim());
-            }
-        }
-    }
+    // Load .env file (searches cwd, exe dir, ~/.rss-ai/)
+    rss_ai::load_env();
 
     let args = Args::parse();
+
+    // Handle subcommands first
+    #[cfg(feature = "tui")]
+    if let Some(Commands::Tui { db }) = args.command {
+        let db_path = db.unwrap_or_else(|| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+            format!("{}/.rss-ai/rss-ai.db", home)
+        });
+        if let Some(parent) = std::path::Path::new(&db_path).parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        return rss_ai::tui::run(&db_path).await.map_err(|e| e.to_string().into());
+    }
 
     // Load config
     let mut config = if let Some(config_path) = &args.config {
@@ -329,7 +349,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some(id) = &args.unsave {
         // First get current state, then toggle
-        if let Ok(Some(article)) = db.get_article_by_id(id) {
+        if let Ok(Some(_article)) = db.get_article_by_id(id) {
             db.toggle_save(id)?;
             println!("Article {} is now unsaved", id);
         } else {
@@ -347,6 +367,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(days) = args.cleanup {
         let count = db.clear_old_articles(days)?;
         println!("Cleared {} old articles", count);
+        return Ok(());
+    }
+
+    // Handle test-fetch: probe all bypass strategies and report results
+    if let Some(url) = &args.test_fetch {
+        println!("Testing content fetch for: {}\n", url);
+        let fetcher = ArticleFetcher::new();
+
+        // Strategy 1: Direct HTTP
+        print!("[1/3] Direct HTTP ... ");
+        match fetcher.fetch_article(url).await {
+            Ok(content) if !content.trim().is_empty() => {
+                println!("✓ OK ({} chars)", content.len());
+                println!("    Preview: {}", &content[..content.len().min(120)].replace('\n', " "));
+            }
+            Ok(_) => println!("✗ Empty response"),
+            Err(e) => println!("✗ {}", e),
+        }
+
+        // Strategy 2: agent-browser
+        print!("[2/3] agent-browser (Cloudflare bypass) ... ");
+        match rss_ai::ArticleFetcher::fetch_via_browser_test(url).await {
+            Ok(content) => {
+                println!("✓ OK ({} chars)", content.len());
+                println!("    Preview: {}", &content[..content.len().min(120)].replace('\n', " "));
+            }
+            Err(e) => println!("✗ {}", e),
+        }
+
+        // Strategy 3: Wayback Machine
+        print!("[3/3] Wayback Machine ... ");
+        match rss_ai::ArticleFetcher::fetch_via_wayback_test(url).await {
+            Ok(content) => {
+                println!("✓ OK ({} chars)", content.len());
+                println!("    Preview: {}", &content[..content.len().min(120)].replace('\n', " "));
+            }
+            Err(e) => println!("✗ {}", e),
+        }
+
+        // Show what the combined fallback chain actually produces
+        println!("\n--- Combined result (fetch_with_fallbacks) ---");
+        match fetcher.fetch_with_fallbacks(url).await {
+            Ok(content) => {
+                println!("✓ SUCCESS ({} chars)\n", content.len());
+                let preview: String = content.chars().take(500).collect();
+                println!("{}", preview);
+                if content.len() > 500 { println!("\n[... {} more chars]", content.len() - 500); }
+            }
+            Err(e) => println!("✗ All strategies failed: {}", e),
+        }
+        println!("\nTip: use --fetch-full <url> to fetch and display full content.");
         return Ok(());
     }
 
@@ -371,19 +442,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         println!("Fetching article content with Rust (soup + MiniMax)...\n");
 
-        let api_key = std::env::var("MINIMAX_API_KEY").unwrap_or_else(|_| {
-            // Try to read from .env file
-            if let Ok(content) = std::fs::read_to_string("/home/cleber_rodrigues/kiro-bot/.opencode/skills/rss-ai/.env") {
-                for line in content.lines() {
-                    if let Some((key, value)) = line.split_once('=') {
-                        if key.trim() == "MINIMAX_API_KEY" {
-                            return value.trim().to_string();
-                        }
-                    }
-                }
-            }
-            String::new()
-        });
+        let api_key = std::env::var("MINIMAX_API_KEY").unwrap_or_default();
 
         if api_key.is_empty() {
             println!("Error: MINIMAX_API_KEY not set");

@@ -17,25 +17,356 @@ pub struct ArticleFetcher {
 impl ArticleFetcher {
     pub fn new() -> Self {
         let client = Client::builder()
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .timeout(std::time::Duration::from_secs(15))
             .build()
             .unwrap_or_else(|_| Client::new());
-        
+
         Self { client }
     }
+
+    /// Strip clearly noisy elements before markdown conversion.
+    /// NOTE: `header` is intentionally excluded — many sites wrap article
+    /// headlines in `<header class="article-header">` which we want to keep.
+    fn preprocess_html(html: &str) -> String {
+        let noise_tags = [
+            "script", "style", "nav", "footer", "aside",
+            "menu", "noscript", "iframe",
+        ];
+
+        noise_tags.iter().fold(html.to_string(), |acc, tag| {
+            let pattern = format!(r"(?is)<{tag}(?:\s[^>]*)?>.*?</{tag}>", tag = tag);
+            if let Ok(re) = regex::Regex::new(&pattern) {
+                re.replace_all(&acc, " ").into_owned()
+            } else {
+                acc
+            }
+        })
+    }
+
+    /// Convert HTML to Markdown.
+    /// Strategy: preprocess → htmd; on failure fall back to soup text.
+    /// For very large HTML (>500 KB) we pre-extract article/main first to
+    /// avoid htmd OOM or timeout on megabyte-scale pages.
+    pub fn html_to_markdown(html: &str) -> String {
+        // For oversized pages, extract the core content section first
+        let working_html: String = if html.len() > 500_000 {
+            Self::extract_core_html(html).unwrap_or_else(|| html.to_string())
+        } else {
+            html.to_string()
+        };
+
+        let cleaned = Self::preprocess_html(&working_html);
+
+        let md = match htmd::convert(&cleaned) {
+            Ok(m) if !m.trim().is_empty() => m,
+            _ => {
+                // Fallback: soup text extraction with paragraph-break heuristic
+                let soup = Soup::new(&working_html);
+                let text = if let Some(article) = soup.tag("article").find() {
+                    article.text()
+                } else if let Some(main) = soup.tag("main").find() {
+                    main.text()
+                } else {
+                    soup.text()
+                };
+                // Re-join as paragraphs
+                text.lines()
+                    .map(|l| l.trim())
+                    .filter(|l| !l.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n\n")
+            }
+        };
+
+        // Collapse excessive blank lines (max 2 consecutive)
+        let mut result = String::new();
+        let mut blank_count = 0usize;
+        for line in md.lines() {
+            if line.trim().is_empty() {
+                blank_count += 1;
+                if blank_count <= 2 {
+                    result.push('\n');
+                }
+            } else {
+                blank_count = 0;
+                result.push_str(line);
+                result.push('\n');
+            }
+        }
+        result.trim().to_string()
+    }
+
+    /// Find and return the HTML of the first `<article>` or `<main>` block.
+    fn extract_core_html(html: &str) -> Option<String> {
+        for tag in &["article", "main"] {
+            let open = format!("<{}", tag);
+            let close = format!("</{}>", tag);
+            if let Some(start) = html.find(&open) {
+                // Find the LAST closing tag to handle nested elements
+                if let Some(rel_end) = html[start..].rfind(&close) {
+                    let end = start + rel_end + close.len();
+                    return Some(html[start..end].to_string());
+                }
+            }
+        }
+        None
+    }
+
+    /// Fetch raw HTML from URL.
+    /// Note: Accept-Encoding is intentionally omitted — reqwest handles
+    /// gzip/deflate decompression automatically when those features are enabled.
+    async fn fetch_html_raw(&self, url: &str) -> Result<String, FetchError> {
+        let response = self.client
+            .get(url)
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .header("Accept-Language", "en-US,en;q=0.5")
+            .send()
+            .await?;
+        let html = response.text().await?;
+        Ok(html)
+    }
+
+    /// Returns true if text looks like a JS-only redirect / challenge page
+    /// rather than real article content.
+    fn is_trivial_content(text: &str) -> bool {
+        if text.len() < 400 {
+            return true;
+        }
+        let lower = text.to_lowercase();
+        lower.contains("window.location")
+            || lower.contains("const target =")
+            || lower.contains("document.write")
+            || lower.contains("please enable javascript")
+            || lower.contains("enable js and disable any ad blocker")
+    }
+
+    /// Fetch article content as Markdown, trying multiple bypass strategies:
+    /// 1. Direct HTTP fetch
+    /// 2. agent-browser (vercel-labs/agent-browser)
+    /// 3. Wayback Machine archive
+    pub async fn fetch_with_fallbacks(&self, url: &str) -> Result<String, FetchError> {
+        // Strategy 1: Direct HTTP
+        match self.fetch_html_raw(url).await {
+            Ok(html) if !Self::is_blocked(&html) => {
+                let md = Self::html_to_markdown(&html);
+                if !md.trim().is_empty() && !Self::is_trivial_content(&md) {
+                    return Ok(md);
+                }
+                // Content too short or JS-only — fall through to browser
+            }
+            Ok(_) => {} // blocked — fall through
+            Err(_) => {} // network error — fall through
+        }
+
+        // Strategy 2: agent-browser (vercel-labs/agent-browser)
+        match Self::fetch_via_agent_browser(url).await {
+            Ok(content) => return Ok(content),
+            Err(_) => {} // not available or failed — fall through
+        }
+
+        // Strategy 3: Wayback Machine
+        match Self::fetch_via_wayback(&self.client, url).await {
+            Ok(content) => return Ok(content),
+            Err(_) => {}
+        }
+
+        Err(FetchError::Parse(
+            "BLOCKED: Content is protected. All bypass strategies failed.\nTry pressing 'o' to open in your browser.".to_string(),
+        ))
+    }
+
+    /// Try to fetch via agent-browser (vercel-labs/agent-browser).
+    ///
+    /// Correct flow:
+    ///   open --args AutomationControlled → wait networkidle → get html → close
+    ///
+    /// The `wait --load networkidle` step is critical: Cloudflare's JS challenge
+    /// runs in the browser and redirects to the real page once solved. Without
+    /// waiting for networkidle we'd capture the challenge page, not the article.
+    async fn fetch_via_agent_browser(url: &str) -> Result<String, FetchError> {
+        use tokio::process::Command;
+
+        // Unique session so concurrent fetches don't collide
+        let session = format!(
+            "rss-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+        );
+
+        // Hide Playwright's automation fingerprint (key for Cloudflare bypass)
+        let browser_args = "--disable-blink-features=AutomationControlled,--no-sandbox";
+
+        // ── Step 1: Open URL ────────────────────────────────────────────────
+        let open = Command::new("agent-browser")
+            .args(["--session", &session, "--args", browser_args, "open", url])
+            .env("AGENT_BROWSER_DEFAULT_TIMEOUT", "60000")
+            .output()
+            .await
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    FetchError::Parse("agent-browser not installed".to_string())
+                } else {
+                    FetchError::Parse(format!("agent-browser: {}", e))
+                }
+            })?;
+
+        if !open.status.success() {
+            // Timeout is acceptable — the page may still be partially loaded.
+            // Only hard-fail on "not found" or similar OS errors.
+            let stderr = String::from_utf8_lossy(&open.stderr).to_lowercase();
+            if stderr.contains("not found") || stderr.contains("err_name_not_resolved") {
+                let _ = Self::agent_browser_close(&session).await;
+                return Err(FetchError::Parse(format!("agent-browser: URL unreachable")));
+            }
+            // Otherwise continue — page may be usable
+        }
+
+        // ── Step 2: Wait for JS challenges to complete ─────────────────────
+        // networkidle = no network requests for 500ms → Cloudflare JS done
+        let _ = Command::new("agent-browser")
+            .args(["--session", &session, "wait", "--load", "networkidle"])
+            .env("AGENT_BROWSER_DEFAULT_TIMEOUT", "30000")
+            .output()
+            .await;
+
+        // ── Step 3: Extract content (article > main > body) ────────────────
+        let html = {
+            let mut found = String::new();
+            for selector in &["article", "main", "body"] {
+                if let Ok(h) = Self::agent_browser_get_html(&session, selector).await {
+                    if h.len() > 200 {
+                        found = h;
+                        break;
+                    }
+                }
+            }
+            found
+        };
+
+        // ── Step 4: Always close session ───────────────────────────────────
+        let _ = Self::agent_browser_close(&session).await;
+
+        if html.trim().is_empty() {
+            return Err(FetchError::Parse(
+                "agent-browser: no readable content extracted".to_string(),
+            ));
+        }
+
+        let md = Self::html_to_markdown(&html);
+        if md.trim().is_empty() {
+            return Err(FetchError::Parse(
+                "agent-browser: markdown conversion produced no output".to_string(),
+            ));
+        }
+
+        Ok(format!("*\\[Fetched via browser automation\\]*\n\n{}", md))
+    }
+
+    async fn agent_browser_get_html(session: &str, selector: &str) -> Result<String, FetchError> {
+        use tokio::process::Command;
+        let out = Command::new("agent-browser")
+            .args(["--session", session, "get", "html", selector])
+            .env("AGENT_BROWSER_DEFAULT_TIMEOUT", "15000")
+            .output()
+            .await
+            .map_err(|e| FetchError::Parse(e.to_string()))?;
+
+        if out.status.success() {
+            let html = String::from_utf8_lossy(&out.stdout).to_string();
+            if !html.trim().is_empty() {
+                return Ok(html);
+            }
+        }
+        Err(FetchError::Parse(format!(
+            "agent-browser: <{}> empty or missing",
+            selector
+        )))
+    }
+
+    async fn agent_browser_close(session: &str) -> Result<(), FetchError> {
+        use tokio::process::Command;
+        Command::new("agent-browser")
+            .args(["--session", session, "close"])
+            .output()
+            .await
+            .map_err(|e| FetchError::Parse(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Try to fetch an archived version from the Wayback Machine.
+    async fn fetch_via_wayback(client: &Client, url: &str) -> Result<String, FetchError> {
+        // Check availability
+        let check: serde_json::Value = client
+            .get("https://archive.org/wayback/available")
+            .query(&[("url", url)])
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        let available = check
+            .pointer("/archived_snapshots/closest/available")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        if !available {
+            return Err(FetchError::Parse(
+                "Wayback Machine: no snapshot available".to_string(),
+            ));
+        }
+
+        let archived_url = check
+            .pointer("/archived_snapshots/closest/url")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| FetchError::Parse("Wayback Machine: missing URL".to_string()))?
+            .to_string();
+
+        let html = client
+            .get(&archived_url)
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .await?
+            .text()
+            .await?;
+
+        let md = Self::html_to_markdown(&html);
+        if md.trim().is_empty() {
+            return Err(FetchError::Parse(
+                "Wayback Machine: empty content".to_string(),
+            ));
+        }
+
+        Ok(format!("*\\[Retrieved from Wayback Machine\\]*\n\n{}", md))
+    }
+
+    // ── Public test helpers (used by --test-fetch CLI flag) ───────────────
+
+    /// Expose browser strategy for CLI testing.
+    pub async fn fetch_via_browser_test(url: &str) -> Result<String, FetchError> {
+        Self::fetch_via_agent_browser(url).await
+    }
+
+    /// Expose Wayback Machine strategy for CLI testing.
+    pub async fn fetch_via_wayback_test(url: &str) -> Result<String, FetchError> {
+        let client = Client::new();
+        Self::fetch_via_wayback(&client, url).await
+    }
+
+    // ── Legacy methods kept for CLI compatibility ──────────────────────────
 
     pub async fn fetch_article(&self, url: &str) -> Result<String, FetchError> {
         let response = self.client.get(url).send().await?;
         let html = response.text().await?;
 
-        // Check if blocked by Cloudflare or similar
         if Self::is_blocked(&html) {
             return Err(FetchError::Parse("BLOCKED".to_string()));
         }
 
         let soup = Soup::new(&html);
-
-        // Try to find article content
         let text = if let Some(article) = soup.tag("article").find() {
             article.text()
         } else if let Some(main) = soup.tag("main").find() {
@@ -46,14 +377,13 @@ impl ArticleFetcher {
             soup.text()
         };
 
-        // Clean up the text
-        let lines: Vec<&str> = text.lines()
+        let lines: Vec<&str> = text
+            .lines()
             .map(|l| l.trim())
             .filter(|l| !l.is_empty())
             .collect();
-        
-        let cleaned = lines.join("\n");
-        Ok(cleaned)
+
+        Ok(lines.join("\n"))
     }
 
     pub fn is_blocked(html: &str) -> bool {
@@ -67,27 +397,34 @@ impl ArticleFetcher {
             "security check",
             "captcha",
             "access denied",
+            "enable javascript",
+            "ray id",
         ];
-        
+
         let html_lower = html.to_lowercase();
-        blocked_patterns.iter().any(|pattern| html_lower.contains(pattern))
+        blocked_patterns
+            .iter()
+            .any(|pattern| html_lower.contains(pattern))
     }
 
-    pub async fn fetch_and_summarize(&self, url: &str, api_key: &str) -> Result<ArticleContent, FetchError> {
-        // First get the content
+    pub async fn fetch_and_summarize(
+        &self,
+        url: &str,
+        api_key: &str,
+    ) -> Result<ArticleContent, FetchError> {
         let content = self.fetch_article(url).await?;
 
-        // Now use MiniMax to clean/extract
         let client = reqwest::Client::new();
-        
-        let prompt = format!(r#"Extract the main article title and content from this web page content. 
+
+        let prompt = format!(
+            r#"Extract the main article title and content from this web page content.
 
 Page content:
 {}
 
 Return as JSON with:
-- "title": The article headline/title  
-- "content": The main article paragraphs (not navigation, ads, etc)"#, 
+- "title": The article headline/title
+- "content": The main article paragraphs (not navigation, ads, etc)"#,
             &content[..content.len().min(5000)]
         );
 
@@ -110,7 +447,9 @@ Return as JSON with:
             .await
             .map_err(|e| FetchError::Parse(e.to_string()))?;
 
-        let result: serde_json::Value = response.json().await
+        let result: serde_json::Value = response
+            .json()
+            .await
             .map_err(|e| FetchError::Parse(e.to_string()))?;
 
         let content_str = result
@@ -123,27 +462,30 @@ Return as JSON with:
             .unwrap_or(&content)
             .to_string();
 
-        // Try to parse JSON - handle markdown code blocks
         let json_str = content_str
             .trim_start_matches("```json")
             .trim_start_matches("```")
             .trim_end_matches("```")
             .trim();
 
-        // Try direct JSON parse first
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(json_str);
-        
+
         let (title, article_content) = match parsed {
             Ok(json) => (
-                json.get("title").and_then(|v| v.as_str()).unwrap_or("Extracted Article").to_string(),
-                json.get("content").and_then(|v| v.as_str()).unwrap_or(&content).to_string(),
+                json.get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Extracted Article")
+                    .to_string(),
+                json.get("content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&content)
+                    .to_string(),
             ),
             Err(_) => {
-                // Try field extraction
                 let title = extract_json_field(&content_str, "title")
                     .unwrap_or_else(|| "Extracted Article".to_string());
-                let article_content = extract_json_field(&content_str, "content")
-                    .unwrap_or(content);
+                let article_content =
+                    extract_json_field(&content_str, "content").unwrap_or(content);
                 (title, article_content)
             }
         };
@@ -157,14 +499,11 @@ Return as JSON with:
 }
 
 fn extract_json_field(json_str: &str, field: &str) -> Option<String> {
-    // Try to find "field": "value" pattern
     let pattern = format!("\"{}\":", field);
     if let Some(pos) = json_str.find(&pattern) {
         let rest = &json_str[pos..];
-        // Find the opening quote
         if let Some(quote_start) = rest.find('"') {
             let after_quote = &rest[quote_start + 1..];
-            // Find the closing quote (not escaped)
             let mut end = 0;
             let mut escaped = false;
             for (i, c) in after_quote.chars().enumerate() {
@@ -194,6 +533,10 @@ pub struct ArticleContent {
 
 impl std::fmt::Display for ArticleContent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "# {}\n\n**Source:** {}\n\n---\n\n{}", self.title, self.url, self.content)
+        write!(
+            f,
+            "# {}\n\n**Source:** {}\n\n---\n\n{}",
+            self.title, self.url, self.content
+        )
     }
 }

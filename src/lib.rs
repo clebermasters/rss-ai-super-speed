@@ -9,6 +9,57 @@ pub mod summarizer;
 pub mod output;
 pub mod database;
 pub mod vector;
+#[cfg(feature = "tui")]
+pub mod tui;
+
+/// Load a `.env` file by searching common locations, then set env vars.
+/// Search order: cwd/.env → executable-dir/.env → ~/.rss-ai/.env
+/// Lines starting with `#` are skipped. Already-set vars are NOT overwritten.
+pub fn load_env() {
+    let candidates: Vec<std::path::PathBuf> = {
+        let mut v = Vec::new();
+
+        // 1. Current working directory
+        if let Ok(cwd) = std::env::current_dir() {
+            v.push(cwd.join(".env"));
+        }
+
+        // 2. Directory of the running executable
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                v.push(dir.join(".env"));
+            }
+        }
+
+        // 3. ~/.rss-ai/.env
+        if let Ok(home) = std::env::var("HOME") {
+            v.push(std::path::PathBuf::from(home).join(".rss-ai").join(".env"));
+        }
+
+        v
+    };
+
+    for path in candidates {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            for line in content.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                if let Some((key, value)) = line.split_once('=') {
+                    let key = key.trim();
+                    let value = value.trim().trim_matches('"').trim_matches('\'');
+                    // Don't overwrite already-set env vars
+                    if std::env::var(key).is_err() {
+                        std::env::set_var(key, value);
+                    }
+                }
+            }
+            // Stop at first .env found
+            break;
+        }
+    }
+}
 
 // Re-export types for convenience
 pub use fetcher::FeedFetcher;

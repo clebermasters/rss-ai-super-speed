@@ -2,12 +2,7 @@
 
 Modular RSS feed aggregator with AI summarization, filters, fuzzy search, and multiple output formats.
 
-## Installation
-
-```bash
-cd ~/.opencode/skills/rss-ai
-cargo build --release
-```
+Binary is installed and available in PATH: `rss-ai`
 
 Set your MiniMax API key:
 ```bash
@@ -18,19 +13,19 @@ echo "MINIMAX_API_KEY=your_key" > .env
 
 ```bash
 # List default feeds
-./target/release/rss-ai --list-feeds
+rss-ai --list-feeds
 
 # Fetch and display JSON
-./target/release/rss-ai
+rss-ai
 
 # Fetch and summarize with AI
-./target/release/rss-ai --summarize
+rss-ai --summarize
 
 # Search with fuzzy matching
-./target/release/rss-ai --search "AI" --fuzzy
+rss-ai --search "AI" --fuzzy
 
 # Filter by score and keywords
-./target/release/rss-ai --min-score 100 --include "GPT,Claude" --exclude "crypto"
+rss-ai --min-score 100 --include "GPT,Claude" --exclude "crypto"
 ```
 
 ## CLI Options
@@ -76,7 +71,7 @@ echo "MINIMAX_API_KEY=your_key" > .env
 
 ### Fetch multiple feeds
 ```bash
-./target/release/rss-ai \
+rss-ai \
   --feeds "https://hnrss.org/best" \
   --feeds "https://techcrunch.com/feed/" \
   --limit 20
@@ -84,7 +79,7 @@ echo "MINIMAX_API_KEY=your_key" > .env
 
 ### Search with filters
 ```bash
-./target/release/rss-ai \
+rss-ai \
   --search "machine learning" \
   --fuzzy \
   --min-score 50 \
@@ -95,7 +90,7 @@ echo "MINIMAX_API_KEY=your_key" > .env
 
 ### AI Summary with custom prompt
 ```bash
-./target/release/rss-ai \
+rss-ai \
   --summarize \
   --model "MiniMax-M2.5-highspeed-Lightning" \
   --prompt "Summarize and identify investment opportunities" \
@@ -104,7 +99,7 @@ echo "MINIMAX_API_KEY=your_key" > .env
 
 ### Output to file
 ```bash
-./target/release/rss-ai \
+rss-ai \
   --summarize \
   --output "daily_digest.html" \
   --format html
@@ -113,44 +108,44 @@ echo "MINIMAX_API_KEY=your_key" > .env
 ### Database Operations
 ```bash
 # Sync new articles (deduplication)
-./target/release/rss-ai --sync
+rss-ai --sync
 
 # Show unread articles
-./target/release/rss-ai --unread
+rss-ai --unread
 
 # Show saved articles
-./target/release/rss-ai --saved
+rss-ai --saved
 
 # Mark article as read (use ID from --unread output)
-./target/release/rss-ai --mark-read <article-id>
+rss-ai --mark-read <article-id>
 
 # Save article for later
-./target/release/rss-ai --save <article-id>
+rss-ai --save <article-id>
 
 # Mark all as read
-./target/release/rss-ai --mark-all-read
+rss-ai --mark-all-read
 
 # Show statistics
-./target/release/rss-ai --stats
+rss-ai --stats
 
 # Cleanup old read articles (30 days)
-./target/release/rss-ai --cleanup 30
+rss-ai --cleanup 30
 
 # Generate embeddings for semantic search (requires Ollama)
-./target/release/rss-ai --embed
+rss-ai --embed
 
 # Semantic search
-./target/release/rss-ai --semantic-search "machine learning"
+rss-ai --semantic-search "machine learning"
 
 # Fetch full article content (AI-powered with MiniMax)
-./target/release/rss-ai --fetch-full <article-id>
-./target/release/rss-ai --fetch-full "https://techcrunch.com/..."
+rss-ai --fetch-full <article-id>
+rss-ai --fetch-full "https://techcrunch.com/..."
 
 # Open article in browser
-./target/release/rss-ai --open <article-id>
+rss-ai --open <article-id>
 
 # Use browser automation when blocked (Cloudflare)
-./target/release/rss-ai --fetch-full <article-id> --force-browser
+rss-ai --fetch-full <article-id> --force-browser
 ```
 
 ## Config File

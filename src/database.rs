@@ -171,9 +171,11 @@ impl Database {
         let conn = self.conn.lock().unwrap();
 
         let mut sql = String::from(
-            "SELECT id, title, link, summary, published, source, source_url, score, comments, is_read, is_saved 
+            "SELECT id, title, link, summary, content, published, source, source_url, score, comments, is_read, is_saved \
              FROM articles WHERE 1=1"
         );
+
+        let mut source_param: Option<String> = None;
 
         if filter.unread_only {
             sql.push_str(" AND is_read = 0");
@@ -184,7 +186,8 @@ impl Database {
         }
 
         if let Some(ref source) = filter.source {
-            sql.push_str(&format!(" AND source = '{}'", source.replace("'", "''")));
+            sql.push_str(" AND source = ?1");
+            source_param = Some(source.clone());
         }
 
         if let Some(min_score) = filter.min_score {
@@ -204,23 +207,30 @@ impl Database {
 
         let mut stmt = conn.prepare(&sql)?;
 
-        let articles = stmt
-            .query_map([], |row| {
-                Ok(ArticleWithState {
-                    id: row.get(0)?,
-                    title: row.get(1)?,
-                    link: row.get(2)?,
-                    summary: row.get(3)?,
-                    published: row.get(4)?,
-                    source: row.get(5)?,
-                    source_url: row.get(6)?,
-                    score: row.get(7)?,
-                    comments: row.get(8)?,
-                    is_read: row.get::<_, i32>(9)? == 1,
-                    is_saved: row.get::<_, i32>(10)? == 1,
-                })
-            })?
-            .collect::<Result<Vec<_>>>()?;
+        let map_row = |row: &rusqlite::Row| {
+            Ok(ArticleWithState {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                link: row.get(2)?,
+                summary: row.get(3)?,
+                content: row.get(4)?,
+                published: row.get(5)?,
+                source: row.get(6)?,
+                source_url: row.get(7)?,
+                score: row.get(8)?,
+                comments: row.get(9)?,
+                is_read: row.get::<_, i32>(10)? == 1,
+                is_saved: row.get::<_, i32>(11)? == 1,
+            })
+        };
+
+        let articles = if let Some(ref src) = source_param {
+            stmt.query_map(params![src], map_row)?
+                .collect::<Result<Vec<_>>>()?
+        } else {
+            stmt.query_map([], map_row)?
+                .collect::<Result<Vec<_>>>()?
+        };
 
         Ok(articles)
     }
@@ -284,15 +294,54 @@ impl Database {
         Ok(count as usize)
     }
 
+    pub fn update_article_summary(&self, id: &str, summary: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE articles SET summary = ?1 WHERE id = ?2",
+            params![summary, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_article_content(&self, id: &str, content: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE articles SET content = ?1 WHERE id = ?2",
+            params![content, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_feed(&self, url: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM feeds WHERE url = ?1", params![url])?;
+        Ok(())
+    }
+
+    pub fn toggle_feed_enabled(&self, url: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let current: i32 = conn.query_row(
+            "SELECT enabled FROM feeds WHERE url = ?1",
+            params![url],
+            |row| row.get(0),
+        )?;
+        let new_value = if current == 1 { 0 } else { 1 };
+        conn.execute(
+            "UPDATE feeds SET enabled = ?1 WHERE url = ?2",
+            params![new_value, url],
+        )?;
+        Ok(new_value == 1)
+    }
+
     pub fn search_articles(&self, query: &str, limit: usize) -> Result<Vec<ArticleWithState>> {
         let conn = self.conn.lock().unwrap();
-        let search = format!("%{}%", query.replace("'", "''"));
+        let search = format!("%{}%", query);
 
         let mut stmt = conn.prepare(
-            "SELECT id, title, link, summary, published, source, source_url, score, comments, is_read, is_saved 
-             FROM articles 
-             WHERE title LIKE ?1 OR summary LIKE ?1 OR source LIKE ?1
-             ORDER BY published DESC
+            "SELECT id, title, link, summary, content, published, source, source_url, score, comments, is_read, is_saved \
+             FROM articles \
+             WHERE title LIKE ?1 OR summary LIKE ?1 OR source LIKE ?1 \
+             ORDER BY published DESC \
              LIMIT ?2"
         )?;
 
@@ -303,13 +352,14 @@ impl Database {
                     title: row.get(1)?,
                     link: row.get(2)?,
                     summary: row.get(3)?,
-                    published: row.get(4)?,
-                    source: row.get(5)?,
-                    source_url: row.get(6)?,
-                    score: row.get(7)?,
-                    comments: row.get(8)?,
-                    is_read: row.get::<_, i32>(9)? == 1,
-                    is_saved: row.get::<_, i32>(10)? == 1,
+                    content: row.get(4)?,
+                    published: row.get(5)?,
+                    source: row.get(6)?,
+                    source_url: row.get(7)?,
+                    score: row.get(8)?,
+                    comments: row.get(9)?,
+                    is_read: row.get::<_, i32>(10)? == 1,
+                    is_saved: row.get::<_, i32>(11)? == 1,
                 })
             })?
             .collect::<Result<Vec<_>>>()?;
@@ -320,7 +370,7 @@ impl Database {
     pub fn get_article_by_id(&self, id: &str) -> Result<Option<ArticleWithState>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, title, link, summary, published, source, source_url, score, comments, is_read, is_saved 
+            "SELECT id, title, link, summary, content, published, source, source_url, score, comments, is_read, is_saved \
              FROM articles WHERE id = ?1"
         )?;
 
@@ -330,13 +380,14 @@ impl Database {
                 title: row.get(1)?,
                 link: row.get(2)?,
                 summary: row.get(3)?,
-                published: row.get(4)?,
-                source: row.get(5)?,
-                source_url: row.get(6)?,
-                score: row.get(7)?,
-                comments: row.get(8)?,
-                is_read: row.get::<_, i32>(9)? == 1,
-                is_saved: row.get::<_, i32>(10)? == 1,
+                content: row.get(4)?,
+                published: row.get(5)?,
+                source: row.get(6)?,
+                source_url: row.get(7)?,
+                score: row.get(8)?,
+                comments: row.get(9)?,
+                is_read: row.get::<_, i32>(10)? == 1,
+                is_saved: row.get::<_, i32>(11)? == 1,
             })
         });
 
@@ -376,6 +427,7 @@ pub struct ArticleWithState {
     pub title: String,
     pub link: String,
     pub summary: Option<String>,
+    pub content: Option<String>,
     pub published: Option<String>,
     pub source: String,
     pub source_url: String,

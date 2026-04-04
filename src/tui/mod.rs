@@ -247,8 +247,12 @@ async fn handle_action(app: &mut App, action: Action, action_tx: mpsc::Sender<Ac
         }
 
         Action::FetchContent(id) => {
-            app.loading = true;
-            app.set_status("Fetching article… (trying direct HTTP)", false);
+            // Background prefetch: no spinner or status message
+            let is_prefetch = app.prefetching_ids.contains(&id);
+            if !is_prefetch {
+                app.loading = true;
+                app.set_status("Fetching article… (trying direct HTTP)", false);
+            }
 
             let db = app.db.clone();
             let url = app
@@ -266,10 +270,11 @@ async fn handle_action(app: &mut App, action: Action, action_tx: mpsc::Sender<Ac
             tokio::spawn(async move {
                 let fetcher = ArticleFetcher::new();
 
-                // Inform the user which strategy is running
-                let _ = action_tx
-                    .send(Action::Info("Fetching article… (HTTP → browser → archive)".to_string()))
-                    .await;
+                if !is_prefetch {
+                    let _ = action_tx
+                        .send(Action::Info("Fetching article… (HTTP → browser → archive)".to_string()))
+                        .await;
+                }
 
                 match fetcher.fetch_with_fallbacks(&url).await {
                     Ok(raw_markdown) => {
@@ -278,9 +283,11 @@ async fn handle_action(app: &mut App, action: Action, action_tx: mpsc::Sender<Ac
                             .map(|k| !k.is_empty())
                             .unwrap_or(false)
                         {
-                            let _ = action_tx
-                                .send(Action::Info("Formatting content with AI…".to_string()))
-                                .await;
+                            if !is_prefetch {
+                                let _ = action_tx
+                                    .send(Action::Info("Formatting content with AI…".to_string()))
+                                    .await;
+                            }
                             let ai_config = crate::AiConfig {
                                 enabled: true,
                                 model: std::env::var("AI_MODEL")
@@ -300,16 +307,21 @@ async fn handle_action(app: &mut App, action: Action, action_tx: mpsc::Sender<Ac
                             .await;
                     }
                     Err(e) => {
-                        let _ = action_tx
-                            .send(Action::Error(format!("Could not fetch: {}", e)))
-                            .await;
+                        if !is_prefetch {
+                            let _ = action_tx
+                                .send(Action::Error(format!("Could not fetch: {}", e)))
+                                .await;
+                        }
                     }
                 }
             });
         }
 
         Action::ContentFetched(id, content) => {
-            app.loading = false;
+            let was_prefetch = app.prefetching_ids.remove(&id);
+            if !was_prefetch {
+                app.loading = false;
+            }
             let via_browser = content.starts_with("*\\[Fetched via browser");
             let via_wayback = content.starts_with("*\\[Retrieved from Wayback");
             if let Some(a) = app.articles.iter_mut().find(|a| a.id == id) {

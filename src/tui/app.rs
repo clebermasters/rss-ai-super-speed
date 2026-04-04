@@ -156,6 +156,8 @@ pub struct App {
     pub action_tx: mpsc::Sender<Action>,
     pub should_quit: bool,
     pub hidden_ids: std::collections::HashSet<String>,
+    /// IDs of articles currently being background-fetched (to avoid duplicate dispatches)
+    pub prefetching_ids: std::collections::HashSet<String>,
 }
 
 impl App {
@@ -179,6 +181,7 @@ impl App {
             action_tx,
             should_quit: false,
             hidden_ids: std::collections::HashSet::new(),
+            prefetching_ids: std::collections::HashSet::new(),
         }
     }
 
@@ -225,6 +228,19 @@ impl App {
         {
             self.selected_article = self.filtered_indices.len() - 1;
         }
+    }
+
+    /// Return the ID of the article `offset` positions ahead of the current
+    /// selection that still needs its content fetched, or None if already
+    /// fetched / in-flight / out of range.
+    pub fn prefetch_target(&self, offset: usize) -> Option<String> {
+        let target_pos = self.selected_article.checked_add(offset)?;
+        let article_idx = *self.filtered_indices.get(target_pos)?;
+        let article = self.articles.get(article_idx)?;
+        if article.content.is_some() || self.prefetching_ids.contains(&article.id) {
+            return None;
+        }
+        Some(article.id.clone())
     }
 
     pub fn selected_article_ref(&self) -> Option<&ArticleWithState> {

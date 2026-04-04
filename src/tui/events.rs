@@ -2,6 +2,15 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::tui::app::{Action, App, Mode, Panel};
 
+/// Silently dispatch FetchContent for the article 3 positions ahead if it
+/// has no content yet and is not already being fetched.
+async fn schedule_prefetch(app: &mut App) {
+    if let Some(id) = app.prefetch_target(3) {
+        app.prefetching_ids.insert(id.clone());
+        let _ = app.action_tx.send(Action::FetchContent(id)).await;
+    }
+}
+
 /// Handle a keyboard event, possibly sending actions to the background channel.
 /// Returns true if the app should quit.
 pub async fn handle_key(app: &mut App, key: KeyEvent) {
@@ -133,26 +142,30 @@ async fn handle_articles_keys(app: &mut App, key: KeyEvent) {
             {
                 app.selected_article += 1;
                 app.reader_scroll = 0;
+                schedule_prefetch(app).await;
             }
         }
         KeyCode::Char('k') | KeyCode::Up => {
             if app.selected_article > 0 {
                 app.selected_article -= 1;
                 app.reader_scroll = 0;
+                schedule_prefetch(app).await;
             }
         }
         KeyCode::Char('g') => {
             app.selected_article = 0;
             app.reader_scroll = 0;
+            schedule_prefetch(app).await;
         }
         KeyCode::Char('G') => {
             if !app.filtered_indices.is_empty() {
                 app.selected_article = app.filtered_indices.len() - 1;
                 app.reader_scroll = 0;
+                schedule_prefetch(app).await;
             }
         }
-        KeyCode::Char('n') => app.move_next_unread(),
-        KeyCode::Char('p') => app.move_prev_unread(),
+        KeyCode::Char('n') => { app.move_next_unread(); schedule_prefetch(app).await; }
+        KeyCode::Char('p') => { app.move_prev_unread(); schedule_prefetch(app).await; }
         KeyCode::Enter | KeyCode::Char(' ') => {
             // Focus reader and mark as read
             app.focus = Panel::Reader;

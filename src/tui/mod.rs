@@ -231,7 +231,28 @@ async fn handle_action(app: &mut App, action: Action, action_tx: mpsc::Sender<Ac
                     .await;
 
                 match fetcher.fetch_with_fallbacks(&url).await {
-                    Ok(markdown) => {
+                    Ok(raw_markdown) => {
+                        // AI formatting — auto-enabled when MINIMAX_API_KEY is set
+                        let markdown = if std::env::var("MINIMAX_API_KEY")
+                            .map(|k| !k.is_empty())
+                            .unwrap_or(false)
+                        {
+                            let _ = action_tx
+                                .send(Action::Info("Formatting content with AI…".to_string()))
+                                .await;
+                            let ai_config = crate::AiConfig {
+                                enabled: true,
+                                model: std::env::var("AI_MODEL")
+                                    .unwrap_or_else(|_| "MiniMax-M2.5-highspeed".to_string()),
+                                temperature: 0.3,
+                                max_tokens: 4096,
+                                custom_prompt: None,
+                            };
+                            let summarizer = crate::summarizer::AiSummarizer::new(ai_config);
+                            summarizer.format_article_content(&raw_markdown).await
+                        } else {
+                            raw_markdown
+                        };
                         let _ = db.update_article_content(id.clone(), markdown.clone()).await;
                         let _ = action_tx
                             .send(Action::ContentFetched(id, markdown))

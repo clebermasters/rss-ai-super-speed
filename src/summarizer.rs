@@ -190,6 +190,80 @@ Format your response in clear sections with markdown headers."#;
             .join("\n\n")
     }
     
+    /// Extract the main article body from raw fetched content and reformat
+    /// it as clean, terminal-friendly Markdown. Returns `raw_content` unchanged
+    /// when the API key is missing or the call fails, so callers never see an error.
+    pub async fn format_article_content(&self, raw_content: &str) -> String {
+        let api_key = match env::var("MINIMAX_API_KEY") {
+            Ok(k) if !k.is_empty() => k,
+            _ => return raw_content.to_string(),
+        };
+
+        // Cap to ~12 K chars to stay well inside token limits
+        let content_preview: String = raw_content.chars().take(12_000).collect();
+
+        let prompt = format!(
+            "You are a news article formatter for a terminal RSS reader.\n\
+             Given the raw extracted content below, do the following:\n\
+             1. Extract ONLY the main article body — strip navigation links, ads,\n\
+                cookie notices, footer text, unrelated link lists, and metadata clutter.\n\
+             2. Reformat as clean Markdown optimised for terminal display:\n\
+                - `#` for the article title if present\n\
+                - `##` / `###` for major sections\n\
+                - ``` fences for code blocks\n\
+                - `-` for bullet lists\n\
+                - `>` for blockquotes\n\
+                - A blank line between paragraphs\n\
+             3. Keep the FULL article content — do NOT summarise.\n\
+             4. Start your reply directly with the Markdown — no preamble.\n\
+             \n\
+             Raw content:\n\
+             ---\n\
+             {}\n\
+             ---",
+            content_preview
+        );
+
+        let request = MiniMaxRequest {
+            model: self.config.model.clone(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: prompt,
+            }],
+            temperature: 0.3, // low temp = consistent formatting
+            max_tokens: Some(4096),
+        };
+
+        let response = match self
+            .client
+            .post("https://api.minimax.io/v1/text/chatcompletion_v2")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .json(&request)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => return raw_content.to_string(),
+        };
+
+        let result: MiniMaxResponse = match response.json().await {
+            Ok(r) => r,
+            Err(_) => return raw_content.to_string(),
+        };
+
+        if result.base_resp.status_code != 0 {
+            return raw_content.to_string();
+        }
+
+        result
+            .choices
+            .and_then(|c| c.into_iter().next())
+            .map(|c| c.message.content)
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| raw_content.to_string())
+    }
+
     pub fn set_model(&mut self, model: String) {
         self.config.model = model;
     }

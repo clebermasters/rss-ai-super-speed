@@ -409,11 +409,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Show what the combined fallback chain actually produces
         println!("\n--- Combined result (fetch_with_fallbacks) ---");
         match fetcher.fetch_with_fallbacks(url).await {
-            Ok(content) => {
-                println!("✓ SUCCESS ({} chars)\n", content.len());
-                let preview: String = content.chars().take(500).collect();
+            Ok(raw_content) => {
+                println!("✓ SUCCESS ({} chars)\n", raw_content.len());
+                let preview: String = raw_content.chars().take(500).collect();
                 println!("{}", preview);
-                if content.len() > 500 { println!("\n[... {} more chars]", content.len() - 500); }
+                if raw_content.len() > 500 { println!("\n[... {} more chars]", raw_content.len() - 500); }
+
+                // AI formatting pass
+                let api_key = std::env::var("MINIMAX_API_KEY").unwrap_or_default();
+                if !api_key.is_empty() {
+                    println!("\n--- AI-formatted content (MINIMAX_API_KEY detected) ---");
+                    let ai_config = rss_ai::AiConfig {
+                        enabled: true,
+                        model: std::env::var("AI_MODEL")
+                            .unwrap_or_else(|_| "MiniMax-M2.5-highspeed".to_string()),
+                        temperature: 0.3,
+                        max_tokens: 4096,
+                        custom_prompt: None,
+                    };
+                    let summarizer = rss_ai::summarizer::AiSummarizer::new(ai_config);
+                    let formatted = summarizer.format_article_content(&raw_content).await;
+                    println!("{}", formatted);
+                } else {
+                    println!("\nTip: set MINIMAX_API_KEY to enable AI content formatting.");
+                }
             }
             Err(e) => println!("✗ All strategies failed: {}", e),
         }

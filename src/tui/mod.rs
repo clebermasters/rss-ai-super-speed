@@ -390,6 +390,7 @@ async fn handle_action(app: &mut App, action: Action, action_tx: mpsc::Sender<Ac
         }
 
         Action::SummaryReady(id, summary) => {
+            app.prefetching_ids.remove(&format!("sum:{}", id));
             app.loading = false;
             if let Some(a) = app.articles.iter_mut().find(|a| a.id == id) {
                 a.summary = Some(summary);

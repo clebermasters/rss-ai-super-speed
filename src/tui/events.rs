@@ -2,9 +2,38 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::tui::app::{Action, App, Mode, Panel};
 
-/// Silently dispatch FetchContent for the article 3 positions ahead if it
-/// has no content yet and is not already being fetched.
+/// Auto-fetch content and summary for the current article if missing,
+/// and silently prefetch content for the article 3 positions ahead.
 async fn schedule_prefetch(app: &mut App) {
+    let has_minimax = std::env::var("MINIMAX_API_KEY")
+        .map(|k| !k.is_empty())
+        .unwrap_or(false);
+
+    // ── Current article: auto-fetch content if missing ────────────────────
+    if let Some(id) = app.prefetch_target(0) {
+        app.prefetching_ids.insert(id.clone());
+        let _ = app.action_tx.send(Action::FetchContent(id)).await;
+    }
+
+    // ── Current article: auto-summarize if missing (needs AI key) ─────────
+    if has_minimax {
+        let sum_key_and_id = app
+            .filtered_indices
+            .get(app.selected_article)
+            .and_then(|&idx| app.articles.get(idx))
+            .filter(|a| {
+                a.summary.is_none()
+                    && !app.prefetching_ids.contains(&format!("sum:{}", a.id))
+            })
+            .map(|a| a.id.clone());
+
+        if let Some(id) = sum_key_and_id {
+            app.prefetching_ids.insert(format!("sum:{}", id));
+            let _ = app.action_tx.send(Action::AiSummarize(id)).await;
+        }
+    }
+
+    // ── 3 positions ahead: silent background content prefetch ─────────────
     if let Some(id) = app.prefetch_target(3) {
         app.prefetching_ids.insert(id.clone());
         let _ = app.action_tx.send(Action::FetchContent(id)).await;

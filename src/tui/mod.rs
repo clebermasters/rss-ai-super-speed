@@ -2,7 +2,7 @@ use std::io::{self, Stdout};
 use std::time::Duration;
 
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture, Event, EventStream},
+    event::{DisableMouseCapture, EnableMouseCapture, Event, EventStream, MouseEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -108,6 +108,47 @@ pub async fn run(db_path: &str) -> Result<(), Box<dyn std::error::Error>> {
                         handle_key(&mut app, key).await;
                         if app.should_quit {
                             break;
+                        }
+                    }
+                    Event::Mouse(mouse) => {
+                        use crate::tui::app::Panel;
+                        match mouse.kind {
+                            MouseEventKind::ScrollDown => match app.focus {
+                                Panel::Reader => {
+                                    app.reader_scroll = app.reader_scroll.saturating_add(3);
+                                }
+                                Panel::Articles => {
+                                    if !app.filtered_indices.is_empty()
+                                        && app.selected_article
+                                            < app.filtered_indices.len() - 1
+                                    {
+                                        app.selected_article += 1;
+                                        app.reader_scroll = 0;
+                                    }
+                                }
+                                Panel::Feeds => {
+                                    if app.selected_feed < app.feeds.len() {
+                                        app.selected_feed += 1;
+                                    }
+                                }
+                            },
+                            MouseEventKind::ScrollUp => match app.focus {
+                                Panel::Reader => {
+                                    app.reader_scroll = app.reader_scroll.saturating_sub(3);
+                                }
+                                Panel::Articles => {
+                                    if app.selected_article > 0 {
+                                        app.selected_article -= 1;
+                                        app.reader_scroll = 0;
+                                    }
+                                }
+                                Panel::Feeds => {
+                                    if app.selected_feed > 0 {
+                                        app.selected_feed -= 1;
+                                    }
+                                }
+                            },
+                            _ => {}
                         }
                     }
                     Event::Resize(_, _) => {}

@@ -55,6 +55,29 @@ impl Widget for HelpOverlay {
                 Span::raw("Next / Prev unread"),
             ]),
             Line::from(""),
+            Line::from(Span::styled("Reader Scroll", theme::style_title())),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  j / k      ", theme::style_source()),
+                Span::raw("Scroll line down / up  (Reader panel)"),
+            ]),
+            Line::from(vec![
+                Span::styled("  d / u      ", theme::style_source()),
+                Span::raw("Scroll 10 lines down / up"),
+            ]),
+            Line::from(vec![
+                Span::styled("  PgDn/PgUp  ", theme::style_source()),
+                Span::raw("Scroll 20 lines (works in any panel)"),
+            ]),
+            Line::from(vec![
+                Span::styled("  Mouse wheel", theme::style_source()),
+                Span::raw("Scroll focused panel"),
+            ]),
+            Line::from(vec![
+                Span::styled("  Home / g   ", theme::style_source()),
+                Span::raw("Jump to top of reader"),
+            ]),
+            Line::from(""),
             Line::from(Span::styled("Article Actions", theme::style_title())),
             Line::from(""),
             Line::from(vec![

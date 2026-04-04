@@ -210,6 +210,13 @@ async fn handle_articles_keys(app: &mut App, key: KeyEvent) {
         KeyCode::Char('l') | KeyCode::Right => {
             app.focus = Panel::Reader;
         }
+        // Scroll the reader panel without leaving the article list
+        KeyCode::PageDown => {
+            app.reader_scroll = app.reader_scroll.saturating_add(20);
+        }
+        KeyCode::PageUp => {
+            app.reader_scroll = app.reader_scroll.saturating_sub(20);
+        }
         KeyCode::Tab => {
             app.focus = app.focus.next();
         }
@@ -238,6 +245,15 @@ async fn handle_reader_keys(app: &mut App, key: KeyEvent) {
             app.reader_scroll = app.reader_scroll.saturating_sub(10);
         }
         KeyCode::Char('g') => {
+            app.reader_scroll = 0;
+        }
+        KeyCode::PageDown => {
+            app.reader_scroll = app.reader_scroll.saturating_add(20);
+        }
+        KeyCode::PageUp => {
+            app.reader_scroll = app.reader_scroll.saturating_sub(20);
+        }
+        KeyCode::Home => {
             app.reader_scroll = 0;
         }
         KeyCode::Char('o') => open_in_browser(app),

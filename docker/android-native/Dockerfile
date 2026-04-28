@@ -3,11 +3,6 @@ ARG BUILD_TYPE=debug
 FROM rss-ai-android-base:latest AS builder
 
 ARG BUILD_TYPE=debug
-ARG RSS_API_BASE_URL=""
-ARG DEFAULT_LLM_PROVIDER="openai_compatible"
-ARG DEFAULT_AI_MODEL="gpt-5.4"
-ARG DEFAULT_CODEX_MODEL="gpt-5.4"
-ARG DEFAULT_BROWSER_BYPASS_ENABLED="true"
 
 WORKDIR /app
 
@@ -36,18 +31,29 @@ RUN mkdir -p /root/.android \
     && cp /app/app/debug.keystore /root/.android/debug.keystore
 
 RUN --mount=type=cache,target=/root/.gradle \
-    --mount=type=secret,id=rss_api_token \
-    set -eux; \
-    RSS_API_TOKEN_VALUE="$(cat /run/secrets/rss_api_token 2>/dev/null || true)"; \
+    --mount=type=secret,id=rss_android_config \
+    set -eu; \
+    config_file="/run/secrets/rss_android_config"; \
+    read_config() { awk -F= -v wanted="$1" '$1 == wanted { value = substr($0, index($0, "=") + 1) } END { print value }' "$config_file" 2>/dev/null || true; }; \
+    RSS_API_BASE_URL_VALUE="$(read_config RSS_API_BASE_URL)"; \
+    RSS_API_TOKEN_VALUE="$(read_config RSS_API_TOKEN)"; \
+    DEFAULT_LLM_PROVIDER_VALUE="$(read_config DEFAULT_LLM_PROVIDER)"; \
+    DEFAULT_AI_MODEL_VALUE="$(read_config DEFAULT_AI_MODEL)"; \
+    DEFAULT_CODEX_MODEL_VALUE="$(read_config DEFAULT_CODEX_MODEL)"; \
+    DEFAULT_BROWSER_BYPASS_ENABLED_VALUE="$(read_config DEFAULT_BROWSER_BYPASS_ENABLED)"; \
+    DEFAULT_LLM_PROVIDER_VALUE="${DEFAULT_LLM_PROVIDER_VALUE:-openai_compatible}"; \
+    DEFAULT_AI_MODEL_VALUE="${DEFAULT_AI_MODEL_VALUE:-gpt-5.4}"; \
+    DEFAULT_CODEX_MODEL_VALUE="${DEFAULT_CODEX_MODEL_VALUE:-gpt-5.4}"; \
+    DEFAULT_BROWSER_BYPASS_ENABLED_VALUE="${DEFAULT_BROWSER_BYPASS_ENABLED_VALUE:-true}"; \
     task="assembleDebug"; \
     if [ "$BUILD_TYPE" = "release" ]; then task="assembleRelease"; fi; \
     gradle ":app:${task}" --no-daemon \
-      -PRSS_API_BASE_URL="$RSS_API_BASE_URL" \
+      -PRSS_API_BASE_URL="$RSS_API_BASE_URL_VALUE" \
       -PRSS_API_TOKEN="$RSS_API_TOKEN_VALUE" \
-      -PDEFAULT_LLM_PROVIDER="$DEFAULT_LLM_PROVIDER" \
-      -PDEFAULT_AI_MODEL="$DEFAULT_AI_MODEL" \
-      -PDEFAULT_CODEX_MODEL="$DEFAULT_CODEX_MODEL" \
-      -PDEFAULT_BROWSER_BYPASS_ENABLED="$DEFAULT_BROWSER_BYPASS_ENABLED"
+      -PDEFAULT_LLM_PROVIDER="$DEFAULT_LLM_PROVIDER_VALUE" \
+      -PDEFAULT_AI_MODEL="$DEFAULT_AI_MODEL_VALUE" \
+      -PDEFAULT_CODEX_MODEL="$DEFAULT_CODEX_MODEL_VALUE" \
+      -PDEFAULT_BROWSER_BYPASS_ENABLED="$DEFAULT_BROWSER_BYPASS_ENABLED_VALUE"
 
 RUN set -eux; \
     apk_path=""; \

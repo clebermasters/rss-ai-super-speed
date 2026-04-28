@@ -1,0 +1,15 @@
+.git
+.codex
+.gradle
+.terraform
+target
+build
+app/build
+aws/dist
+aws/generated
+aws/terraform/.terraform
+__pycache__
+*.pyc
+*.apk
+.env
+.omc

@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -52,6 +54,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.rssai.data.Article
 import com.rssai.data.Feed
@@ -146,93 +149,89 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                     onRefresh = { loadData(refreshFirst = true) },
                     onSettings = { showSettings = true },
                 )
-                Row(Modifier.fillMaxSize().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    FeedPane(feeds = feeds, providers = providers, modifier = Modifier.weight(0.22f).fillMaxHeight())
-                    ArticlePane(
-                        articles = articles,
-                        query = query,
-                        onQuery = {
-                            query = it
-                            loadData()
-                        },
-                        selected = selected,
-                        onSelect = { article ->
-                            selected = article
-                            scope.launch {
-                                runCatching {
-                                    client().markRead(article.articleId)
-                                    client().article(article.articleId)
-                                }.onSuccess {
+                AdaptiveReaderLayout(
+                    feeds = feeds,
+                    providers = providers,
+                    articles = articles,
+                    query = query,
+                    onQuery = {
+                        query = it
+                        loadData()
+                    },
+                    selected = selected,
+                    onBackToArticles = { selected = null },
+                    onSelect = { article ->
+                        selected = article
+                        scope.launch {
+                            runCatching {
+                                client().markRead(article.articleId)
+                                client().article(article.articleId)
+                            }.onSuccess {
+                                selected = it
+                                articles = articles.map { existing ->
+                                    if (existing.articleId == article.articleId) existing.copy(isRead = true) else existing
+                                }
+                            }
+                        }
+                    },
+                    settings = settings,
+                    openUrl = openUrl,
+                    onToggleSave = {
+                        scope.launch {
+                            selected?.let { article ->
+                                runCatching { client().toggleSave(article.articleId) }.onSuccess {
                                     selected = it
-                                    articles = articles.map { existing ->
-                                        if (existing.articleId == article.articleId) existing.copy(isRead = true) else existing
-                                    }
+                                    articles = articles.map { existing -> if (existing.articleId == it.articleId) it else existing }
                                 }
                             }
-                        },
-                        modifier = Modifier.weight(0.38f).fillMaxHeight(),
-                    )
-                    ReaderPane(
-                        article = selected,
-                        settings = settings,
-                        openUrl = openUrl,
-                        onToggleSave = {
-                            scope.launch {
-                                selected?.let { article ->
-                                    runCatching { client().toggleSave(article.articleId) }.onSuccess {
-                                        selected = it
-                                        articles = articles.map { existing -> if (existing.articleId == it.articleId) it else existing }
-                                    }
-                                }
-                            }
-                        },
-                        onFetchContent = {
-                            scope.launch {
-                                selected?.let { article ->
-                                    loading = true
-                                    try {
-                                        var result = client().fetchContent(article.articleId)
-                                        val jobId = result.jobId
-                                        if (result.status != "completed" && !jobId.isNullOrBlank()) {
-                                            status = result.message ?: "Full-content fetch queued"
-                                            repeat(30) {
-                                                if (result.status != "completed" && result.status != "failed") {
-                                                    delay(3000)
-                                                    result = client().contentJob(jobId)
-                                                    status = result.message ?: "Fetch ${result.status}"
-                                                }
+                        }
+                    },
+                    onFetchContent = {
+                        scope.launch {
+                            selected?.let { article ->
+                                loading = true
+                                try {
+                                    var result = client().fetchContent(article.articleId)
+                                    val jobId = result.jobId
+                                    if (result.status != "completed" && !jobId.isNullOrBlank()) {
+                                        status = result.message ?: "Full-content fetch queued"
+                                        repeat(30) {
+                                            if (result.status != "completed" && result.status != "failed") {
+                                                delay(3000)
+                                                result = client().contentJob(jobId)
+                                                status = result.message ?: "Fetch ${result.status}"
                                             }
                                         }
-                                        if (result.status == "failed") {
-                                            status = result.message ?: "Fetch failed"
-                                        } else if (result.content.isNotBlank()) {
-                                            selected = selected?.copy(content = result.content)
-                                            status = "Fetched via ${result.strategy ?: "unknown"}"
-                                        }
-                                    } catch (exc: Exception) {
-                                        status = exc.message ?: "Fetch failed"
                                     }
-                                    loading = false
-                                }
-                            }
-                        },
-                        onSummarize = {
-                            scope.launch {
-                                selected?.let { article ->
-                                    loading = true
-                                    runCatching { client().summarize(article.articleId) }.onSuccess {
-                                        selected = selected?.copy(summary = it.summary)
-                                        status = "Summary ready"
-                                    }.onFailure {
-                                        status = it.message ?: "Summary failed"
+                                    if (result.status == "failed") {
+                                        status = result.message ?: "Fetch failed"
+                                    } else if (result.content.isNotBlank()) {
+                                        selected = selected?.copy(content = result.content)
+                                        status = "Fetched via ${result.strategy ?: "unknown"}"
                                     }
-                                    loading = false
+                                } catch (exc: Exception) {
+                                    status = exc.message ?: "Fetch failed"
                                 }
+                                loading = false
                             }
-                        },
-                        modifier = Modifier.weight(0.4f).fillMaxHeight(),
-                    )
-                }
+                        }
+                    },
+                    onSummarize = {
+                        scope.launch {
+                            selected?.let { article ->
+                                loading = true
+                                runCatching { client().summarize(article.articleId) }.onSuccess {
+                                    selected = selected?.copy(summary = it.summary)
+                                    status = "Summary ready"
+                                }.onFailure {
+                                    status = it.message ?: "Summary failed"
+                                }
+                                loading = false
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
             if (showSettings) {
                 SettingsDialog(
@@ -257,6 +256,226 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                     },
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun AdaptiveReaderLayout(
+    feeds: List<Feed>,
+    providers: List<ProviderInfo>,
+    articles: List<Article>,
+    query: String,
+    onQuery: (String) -> Unit,
+    selected: Article?,
+    onBackToArticles: () -> Unit,
+    onSelect: (Article) -> Unit,
+    settings: Settings,
+    openUrl: (String) -> Unit,
+    onToggleSave: () -> Unit,
+    onFetchContent: () -> Unit,
+    onSummarize: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    BoxWithConstraints(modifier.padding(16.dp)) {
+        when {
+            maxWidth < 720.dp -> MobileReaderLayout(
+                feeds = feeds,
+                providers = providers,
+                articles = articles,
+                query = query,
+                onQuery = onQuery,
+                selected = selected,
+                onBackToArticles = onBackToArticles,
+                onSelect = onSelect,
+                settings = settings,
+                openUrl = openUrl,
+                onToggleSave = onToggleSave,
+                onFetchContent = onFetchContent,
+                onSummarize = onSummarize,
+                modifier = Modifier.fillMaxSize(),
+            )
+            maxWidth < 1100.dp -> TabletReaderLayout(
+                feeds = feeds,
+                providers = providers,
+                articles = articles,
+                query = query,
+                onQuery = onQuery,
+                selected = selected,
+                onSelect = onSelect,
+                settings = settings,
+                openUrl = openUrl,
+                onToggleSave = onToggleSave,
+                onFetchContent = onFetchContent,
+                onSummarize = onSummarize,
+                modifier = Modifier.fillMaxSize(),
+            )
+            else -> DesktopReaderLayout(
+                feeds = feeds,
+                providers = providers,
+                articles = articles,
+                query = query,
+                onQuery = onQuery,
+                selected = selected,
+                onSelect = onSelect,
+                settings = settings,
+                openUrl = openUrl,
+                onToggleSave = onToggleSave,
+                onFetchContent = onFetchContent,
+                onSummarize = onSummarize,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+    }
+}
+
+@Composable
+private fun MobileReaderLayout(
+    feeds: List<Feed>,
+    providers: List<ProviderInfo>,
+    articles: List<Article>,
+    query: String,
+    onQuery: (String) -> Unit,
+    selected: Article?,
+    onBackToArticles: () -> Unit,
+    onSelect: (Article) -> Unit,
+    settings: Settings,
+    openUrl: (String) -> Unit,
+    onToggleSave: () -> Unit,
+    onFetchContent: () -> Unit,
+    onSummarize: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        if (selected == null) {
+            FeedStrip(feeds = feeds, providers = providers)
+            ArticlePane(
+                articles = articles,
+                query = query,
+                onQuery = onQuery,
+                selected = selected,
+                onSelect = onSelect,
+                modifier = Modifier.fillMaxWidth().weight(1f),
+            )
+        } else {
+            TextButton(onClick = onBackToArticles, modifier = Modifier.fillMaxWidth()) {
+                Text("Back to articles")
+            }
+            ReaderPane(
+                article = selected,
+                settings = settings,
+                openUrl = openUrl,
+                onToggleSave = onToggleSave,
+                onFetchContent = onFetchContent,
+                onSummarize = onSummarize,
+                modifier = Modifier.fillMaxWidth().weight(1f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun TabletReaderLayout(
+    feeds: List<Feed>,
+    providers: List<ProviderInfo>,
+    articles: List<Article>,
+    query: String,
+    onQuery: (String) -> Unit,
+    selected: Article?,
+    onSelect: (Article) -> Unit,
+    settings: Settings,
+    openUrl: (String) -> Unit,
+    onToggleSave: () -> Unit,
+    onFetchContent: () -> Unit,
+    onSummarize: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        FeedStrip(feeds = feeds, providers = providers)
+        Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            ArticlePane(
+                articles = articles,
+                query = query,
+                onQuery = onQuery,
+                selected = selected,
+                onSelect = onSelect,
+                modifier = Modifier.weight(0.45f).fillMaxHeight(),
+            )
+            ReaderPane(
+                article = selected,
+                settings = settings,
+                openUrl = openUrl,
+                onToggleSave = onToggleSave,
+                onFetchContent = onFetchContent,
+                onSummarize = onSummarize,
+                modifier = Modifier.weight(0.55f).fillMaxHeight(),
+            )
+        }
+    }
+}
+
+@Composable
+private fun DesktopReaderLayout(
+    feeds: List<Feed>,
+    providers: List<ProviderInfo>,
+    articles: List<Article>,
+    query: String,
+    onQuery: (String) -> Unit,
+    selected: Article?,
+    onSelect: (Article) -> Unit,
+    settings: Settings,
+    openUrl: (String) -> Unit,
+    onToggleSave: () -> Unit,
+    onFetchContent: () -> Unit,
+    onSummarize: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        FeedPane(feeds = feeds, providers = providers, modifier = Modifier.weight(0.22f).fillMaxHeight())
+        ArticlePane(
+            articles = articles,
+            query = query,
+            onQuery = onQuery,
+            selected = selected,
+            onSelect = onSelect,
+            modifier = Modifier.weight(0.38f).fillMaxHeight(),
+        )
+        ReaderPane(
+            article = selected,
+            settings = settings,
+            openUrl = openUrl,
+            onToggleSave = onToggleSave,
+            onFetchContent = onFetchContent,
+            onSummarize = onSummarize,
+            modifier = Modifier.weight(0.4f).fillMaxHeight(),
+        )
+    }
+}
+
+@Composable
+private fun FeedStrip(feeds: List<Feed>, providers: List<ProviderInfo>) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Feeds", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            item {
+                FeedChip(title = "All Articles", subtitle = "${feeds.size} feeds")
+            }
+            items(feeds, key = { it.feedId }) { feed ->
+                FeedChip(title = feed.name, subtitle = if (feed.enabled) "enabled" else "paused")
+            }
+            items(providers, key = { it.id }) { provider ->
+                FeedChip(title = provider.label, subtitle = if (provider.configured) "AI ready" else "missing")
+            }
+        }
+    }
+}
+
+@Composable
+private fun FeedChip(title: String, subtitle: String) {
+    Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFBF4))) {
+        Column(Modifier.width(180.dp).padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -310,16 +529,20 @@ private fun ArticlePane(
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedTextField(value = query, onValueChange = onQuery, label = { Text("Search") }, modifier = Modifier.fillMaxWidth())
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             items(articles, key = { it.articleId }) { article ->
                 val active = selected?.articleId == article.articleId
                 Card(
                     modifier = Modifier.fillMaxWidth().clickable { onSelect(article) },
                     colors = CardDefaults.cardColors(containerColor = if (active) Color(0xFFFFD08A) else Color(0xFFFFFBF4)),
                 ) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text("${if (article.isRead) " " else "●"} ${article.title}", fontWeight = FontWeight.Bold)
-                        Text("${article.source} ${article.score?.let { " · ${it}pts" } ?: ""}", style = MaterialTheme.typography.bodySmall)
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            "${if (article.isRead) " " else "●"} ${article.title}",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text("${article.source} ${article.score?.let { " · ${it}pts" } ?: ""}", style = MaterialTheme.typography.bodyLarge)
                         if (article.isSaved) Text("★ saved", color = MaterialTheme.colorScheme.primary)
                     }
                 }
@@ -349,11 +572,11 @@ private fun ReaderPane(
         Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(article.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
             Text("${article.source} · ${article.publishedAt ?: "no date"} · ${settings.llmProvider}", style = MaterialTheme.typography.bodySmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { openUrl(article.link) }) { Text("Open") }
-                Button(onClick = onToggleSave) { Text(if (article.isSaved) "Unsave" else "Save") }
-                Button(onClick = onFetchContent) { Text("Fetch Full") }
-                Button(onClick = onSummarize) { Text("AI") }
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item { Button(onClick = { openUrl(article.link) }) { Text("Open") } }
+                item { Button(onClick = onToggleSave) { Text(if (article.isSaved) "Unsave" else "Save") } }
+                item { Button(onClick = onFetchContent) { Text("Fetch Full") } }
+                item { Button(onClick = onSummarize) { Text("AI") } }
             }
             article.summary?.takeIf { it.isNotBlank() }?.let {
                 Text("AI Summary", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)

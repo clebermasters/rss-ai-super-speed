@@ -100,6 +100,21 @@ if [ -z "$RSS_API_BASE_URL" ] || [ -z "$RSS_API_TOKEN" ]; then
   echo "WARNING: RSS_API_BASE_URL or RSS_API_TOKEN is empty; the app will open Settings for manual configuration."
 fi
 
+if [ ! -f "$SCRIPT_DIR/app/debug.keystore" ]; then
+  if command -v keytool >/dev/null 2>&1; then
+    mkdir -p "$SCRIPT_DIR/app"
+    keytool -genkeypair -v \
+      -keystore "$SCRIPT_DIR/app/debug.keystore" \
+      -alias androiddebugkey \
+      -keyalg RSA -keysize 2048 -validity 10000 \
+      -storepass android -keypass android \
+      -dname "CN=Android Debug,O=Android,C=US" >/dev/null
+    echo "Created reusable local debug keystore at app/debug.keystore"
+  else
+    echo "WARNING: keytool not found; Docker will create an ephemeral debug keystore and adb reinstall may require uninstalling first."
+  fi
+fi
+
 if ! docker image inspect rss-ai-android-base:latest >/dev/null 2>&1; then
   docker build \
     -t rss-ai-android-base:latest \

@@ -124,6 +124,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                 llmProvider = BuildConfig.DEFAULT_LLM_PROVIDER,
                 aiModel = BuildConfig.DEFAULT_AI_MODEL,
                 codexModel = BuildConfig.DEFAULT_CODEX_MODEL,
+                aiContentFormattingEnabled = BuildConfig.DEFAULT_AI_CONTENT_FORMATTING_ENABLED,
                 browserBypassEnabled = BuildConfig.DEFAULT_BROWSER_BYPASS_ENABLED,
             )
         )
@@ -878,7 +879,7 @@ private fun ReaderContentCard(content: String?) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Article Content", style = MaterialTheme.typography.titleLarge, color = RssColors.Text, fontWeight = FontWeight.Black)
             RichArticleText(
-                content = content?.takeIf { it.isNotBlank() }?.lines()?.take(260)?.joinToString("\n")
+                content = content?.takeIf { it.isNotBlank() }
                     ?: "No full content yet. Use Fetch Full to run direct extraction, browser bypass, and Wayback fallback.",
                 modifier = Modifier.fillMaxWidth(),
                 textSizeSp = 18f,
@@ -1623,6 +1624,7 @@ private fun SettingsDialog(
     var aiModel by remember { mutableStateOf(settings.aiModel) }
     var codexModel by remember { mutableStateOf(settings.codexModel) }
     var embeddingModel by remember { mutableStateOf(settings.embeddingModel) }
+    var aiContentFormatting by remember { mutableStateOf(settings.aiContentFormattingEnabled) }
     var browserBypass by remember { mutableStateOf(settings.browserBypassEnabled) }
     var browserMode by remember { mutableStateOf(settings.browserBypassMode) }
 
@@ -1639,6 +1641,7 @@ private fun SettingsDialog(
                             aiModel = aiModel,
                             codexModel = codexModel,
                             embeddingModel = embeddingModel,
+                            aiContentFormattingEnabled = aiContentFormatting,
                             browserBypassEnabled = browserBypass,
                             browserBypassMode = browserMode,
                         ),
@@ -1649,13 +1652,20 @@ private fun SettingsDialog(
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
         title = { Text("RSS AI Settings") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 OutlinedTextField(base, { base = it }, label = { Text("API base URL") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(token, { token = it }, label = { Text("API token") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(llmProvider, { llmProvider = it }, label = { Text("LLM provider") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(aiModel, { aiModel = it }, label = { Text("OpenAI-compatible model") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(codexModel, { codexModel = it }, label = { Text("Codex model") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(embeddingModel, { embeddingModel = it }, label = { Text("Embedding model") }, modifier = Modifier.fillMaxWidth())
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(aiContentFormatting, { aiContentFormatting = it })
+                    Text("AI readability formatting for fetched article content")
+                }
                 OutlinedTextField(browserMode, { browserMode = it }, label = { Text("Bypass mode: on_blocked or always") }, modifier = Modifier.fillMaxWidth())
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(browserBypass, { browserBypass = it })

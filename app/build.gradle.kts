@@ -21,6 +21,7 @@ android {
         val defaultLlmProvider = providers.gradleProperty("DEFAULT_LLM_PROVIDER").orElse("openai_compatible").get()
         val defaultAiModel = providers.gradleProperty("DEFAULT_AI_MODEL").orElse("gpt-5.4").get()
         val defaultCodexModel = providers.gradleProperty("DEFAULT_CODEX_MODEL").orElse("gpt-5.4").get()
+        val defaultAiContentFormatting = providers.gradleProperty("DEFAULT_AI_CONTENT_FORMATTING_ENABLED").orElse("false").get()
         val defaultBrowserBypass = providers.gradleProperty("DEFAULT_BROWSER_BYPASS_ENABLED").orElse("true").get()
 
         fun String.escaped() = replace("\\", "\\\\").replace("\"", "\\\"")
@@ -30,6 +31,7 @@ android {
         buildConfigField("String", "DEFAULT_LLM_PROVIDER", "\"${defaultLlmProvider.escaped()}\"")
         buildConfigField("String", "DEFAULT_AI_MODEL", "\"${defaultAiModel.escaped()}\"")
         buildConfigField("String", "DEFAULT_CODEX_MODEL", "\"${defaultCodexModel.escaped()}\"")
+        buildConfigField("boolean", "DEFAULT_AI_CONTENT_FORMATTING_ENABLED", defaultAiContentFormatting)
         buildConfigField("boolean", "DEFAULT_BROWSER_BYPASS_ENABLED", defaultBrowserBypass)
     }
 

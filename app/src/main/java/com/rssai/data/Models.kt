@@ -38,6 +38,7 @@ data class Settings(
     val codexModel: String = "gpt-5.4",
     val codexReasoningEffort: String = "medium",
     val embeddingModel: String = "text-embedding-3-small",
+    val aiContentFormattingEnabled: Boolean = false,
     val browserBypassEnabled: Boolean = true,
     val browserBypassMode: String = "on_blocked",
 )

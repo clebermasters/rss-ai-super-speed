@@ -10,7 +10,8 @@ from urllib.parse import parse_qs
 
 import boto3
 
-from ai_client import generate_completion, generate_embedding, list_models, list_providers, summarize_articles
+from ai_client import generate_embedding, list_models, list_providers, summarize_articles
+from content_formatter import format_article_content_for_mobile, should_format_content_with_ai
 from content_fetcher import fetch_direct, fetch_with_fallbacks
 from formatters import format_articles
 from rss_fetcher import fetch_feeds
@@ -241,12 +242,13 @@ def handle_fetch_content(storage: RssStorage, article_id: str, payload: dict[str
     settings = storage.get_settings()
     direct_errors: list[str] = []
     force_browser = _boolish(payload.get("forceBrowser"))
+    format_with_ai = should_format_content_with_ai(settings, payload)
     browser_mode = str(settings.get("browserBypassMode") or "on_blocked")
-    if not force_browser and browser_mode != "always" and not payload.get("formatWithAi"):
+    if not force_browser and browser_mode != "always" and not format_with_ai:
         try:
             content = fetch_direct(article["link"])
             storage.save_article_content(article_id, content)
-            storage.update_article(article_id, {"isRead": True})
+            storage.update_article(article_id, {"isRead": True, "contentAiFormatted": False})
             return 200, {
                 "articleId": article_id,
                 "status": "completed",
@@ -344,18 +346,29 @@ def _run_content_fetch_job(storage: RssStorage, job: dict[str, Any]) -> dict[str
     settings = storage.get_settings()
     fetched = fetch_with_fallbacks(article["link"], settings, force_browser=_boolish(payload.get("forceBrowser")))
     content = fetched["content"]
-    if payload.get("formatWithAi"):
-        content = generate_completion(
-            [
-                {"role": "system", "content": "Clean and format article content as readable markdown."},
-                {"role": "user", "content": content[:12000]},
-            ],
-            settings,
-            payload,
-        )["content"]
+    errors = list(fetched.get("errors", []))
+    formatted = False
+    if should_format_content_with_ai(settings, payload):
+        try:
+            content = format_article_content_for_mobile(
+                content,
+                article=article,
+                settings=settings,
+                overrides=payload,
+            )
+            formatted = True
+        except Exception as exc:
+            errors.append(f"ai_format: {exc}")
     storage.save_article_content(article_id, content)
-    storage.update_article(article_id, {"isRead": True})
-    return {"articleId": article_id, "strategy": fetched.get("strategy"), "content": content, "errors": fetched.get("errors", [])}
+    storage.update_article(
+        article_id,
+        {
+            "isRead": True,
+            "contentAiFormatted": formatted,
+            "contentAiFormattedAt": now_ms() if formatted else None,
+        },
+    )
+    return {"articleId": article_id, "strategy": fetched.get("strategy"), "content": content, "errors": errors}
 
 
 def handle_summarize_article(storage: RssStorage, article_id: str, payload: dict[str, Any]) -> dict[str, Any]:

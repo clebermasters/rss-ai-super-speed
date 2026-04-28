@@ -158,6 +158,7 @@ existing_env_value() {
 }
 
 STATE_BUCKET="${TERRAFORM_STATE_BUCKET:-$(existing_env_value TERRAFORM_STATE_BUCKET "$APP_ENV_FILE")}"
+STATE_BUCKET="${STATE_BUCKET:-krebs-terraform-states}"
 STATE_KEY="${TERRAFORM_STATE_KEY:-$(existing_env_value TERRAFORM_STATE_KEY "$APP_ENV_FILE")}"
 STATE_KEY="${STATE_KEY:-rss-ai/terraform.tfstate}"
 STATE_REGION="${TERRAFORM_STATE_REGION:-$(existing_env_value TERRAFORM_STATE_REGION "$APP_ENV_FILE")}"

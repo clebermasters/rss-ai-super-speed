@@ -4,28 +4,49 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.text.Html
+import android.text.method.LinkMovementMethod
+import android.text.util.Linkify
+import android.util.TypedValue
+import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Article
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Book
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -37,7 +58,11 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -52,10 +77,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import com.rssai.data.Article
 import com.rssai.data.Feed
 import com.rssai.data.ProviderInfo
@@ -88,6 +117,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
     var query by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("Configure API or refresh feeds.") }
     var loading by remember { mutableStateOf(false) }
+    var currentScreen by remember { mutableStateOf(RssScreen.Feeds) }
     var settings by remember {
         mutableStateOf(
             Settings(
@@ -104,7 +134,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
 
     fun client() = RssApiClient(apiBase, apiToken)
 
-    fun loadData(refreshFirst: Boolean = false) {
+    fun loadData(refreshFirst: Boolean = false, searchQuery: String = query) {
         if (apiBase.isBlank() || apiToken.isBlank()) {
             showSettings = true
             return
@@ -117,7 +147,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                 feeds = bootstrap.feeds
                 settings = bootstrap.settings
                 providers = client().providers().providers
-                articles = client().articles(query).articles
+                articles = client().articles(searchQuery).articles
             }.onSuccess {
                 status = "Loaded ${articles.size} articles"
             }.onFailure {
@@ -134,105 +164,111 @@ fun RssAiApp(openUrl: (String) -> Unit) {
     }
 
     MaterialTheme(
-        colorScheme = androidx.compose.material3.lightColorScheme(
-            background = Color(0xFFF5F0E8),
-            surface = Color(0xFFFFFBF4),
-            primary = Color(0xFFA44E24),
-            secondary = Color(0xFF35605A),
+        colorScheme = androidx.compose.material3.darkColorScheme(
+            background = RssColors.Ink,
+            surface = RssColors.Panel,
+            primary = RssColors.Blue,
+            secondary = RssColors.Violet,
+            onBackground = RssColors.Text,
+            onSurface = RssColors.Text,
         ),
     ) {
-        Surface(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-            Column {
-                AppBar(
-                    loading = loading,
-                    status = status,
-                    onRefresh = { loadData(refreshFirst = true) },
-                    onSettings = { showSettings = true },
-                )
-                AdaptiveReaderLayout(
-                    feeds = feeds,
-                    providers = providers,
-                    articles = articles,
-                    query = query,
-                    onQuery = {
-                        query = it
-                        loadData()
-                    },
-                    selected = selected,
-                    onBackToArticles = { selected = null },
-                    onSelect = { article ->
-                        selected = article
-                        scope.launch {
-                            runCatching {
-                                client().markRead(article.articleId)
-                                client().article(article.articleId)
-                            }.onSuccess {
+        Surface(Modifier.fillMaxSize()) {
+            ModernRssLayout(
+                feeds = feeds,
+                providers = providers,
+                articles = articles,
+                query = query,
+                onQuery = {
+                    query = it
+                    loadData(searchQuery = it)
+                },
+                selected = selected,
+                screen = currentScreen,
+                status = status,
+                loading = loading,
+                settings = settings,
+                openUrl = openUrl,
+                onScreen = { currentScreen = it },
+                onRefresh = { loadData(refreshFirst = true) },
+                onSettings = { showSettings = true },
+                onSelectFeed = { feed ->
+                    val feedQuery = feed?.name.orEmpty()
+                    query = feedQuery
+                    currentScreen = RssScreen.Articles
+                    loadData(searchQuery = feedQuery)
+                },
+                onSelect = { article ->
+                    selected = article
+                    currentScreen = RssScreen.Reader
+                    scope.launch {
+                        runCatching {
+                            client().markRead(article.articleId)
+                            client().article(article.articleId)
+                        }.onSuccess {
+                            selected = it
+                            articles = articles.map { existing ->
+                                if (existing.articleId == article.articleId) existing.copy(isRead = true) else existing
+                            }
+                        }
+                    }
+                },
+                onToggleSave = {
+                    scope.launch {
+                        selected?.let { article ->
+                            runCatching { client().toggleSave(article.articleId) }.onSuccess {
                                 selected = it
-                                articles = articles.map { existing ->
-                                    if (existing.articleId == article.articleId) existing.copy(isRead = true) else existing
-                                }
+                                articles = articles.map { existing -> if (existing.articleId == it.articleId) it else existing }
                             }
                         }
-                    },
-                    settings = settings,
-                    openUrl = openUrl,
-                    onToggleSave = {
-                        scope.launch {
-                            selected?.let { article ->
-                                runCatching { client().toggleSave(article.articleId) }.onSuccess {
-                                    selected = it
-                                    articles = articles.map { existing -> if (existing.articleId == it.articleId) it else existing }
-                                }
-                            }
-                        }
-                    },
-                    onFetchContent = {
-                        scope.launch {
-                            selected?.let { article ->
-                                loading = true
-                                try {
-                                    var result = client().fetchContent(article.articleId)
-                                    val jobId = result.jobId
-                                    if (result.status != "completed" && !jobId.isNullOrBlank()) {
-                                        status = result.message ?: "Full-content fetch queued"
-                                        repeat(30) {
-                                            if (result.status != "completed" && result.status != "failed") {
-                                                delay(3000)
-                                                result = client().contentJob(jobId)
-                                                status = result.message ?: "Fetch ${result.status}"
-                                            }
+                    }
+                },
+                onFetchContent = {
+                    scope.launch {
+                        selected?.let { article ->
+                            loading = true
+                            try {
+                                var result = client().fetchContent(article.articleId)
+                                val jobId = result.jobId
+                                if (result.status != "completed" && !jobId.isNullOrBlank()) {
+                                    status = result.message ?: "Full-content fetch queued"
+                                    repeat(30) {
+                                        if (result.status != "completed" && result.status != "failed") {
+                                            delay(3000)
+                                            result = client().contentJob(jobId)
+                                            status = result.message ?: "Fetch ${result.status}"
                                         }
                                     }
-                                    if (result.status == "failed") {
-                                        status = result.message ?: "Fetch failed"
-                                    } else if (result.content.isNotBlank()) {
-                                        selected = selected?.copy(content = result.content)
-                                        status = "Fetched via ${result.strategy ?: "unknown"}"
-                                    }
-                                } catch (exc: Exception) {
-                                    status = exc.message ?: "Fetch failed"
                                 }
-                                loading = false
-                            }
-                        }
-                    },
-                    onSummarize = {
-                        scope.launch {
-                            selected?.let { article ->
-                                loading = true
-                                runCatching { client().summarize(article.articleId) }.onSuccess {
-                                    selected = selected?.copy(summary = it.summary)
-                                    status = "Summary ready"
-                                }.onFailure {
-                                    status = it.message ?: "Summary failed"
+                                if (result.status == "failed") {
+                                    status = result.message ?: "Fetch failed"
+                                } else if (result.content.isNotBlank()) {
+                                    selected = selected?.copy(content = result.content)
+                                    status = "Fetched via ${result.strategy ?: "unknown"}"
                                 }
-                                loading = false
+                            } catch (exc: Exception) {
+                                status = exc.message ?: "Fetch failed"
                             }
+                            loading = false
                         }
-                    },
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
+                    }
+                },
+                onSummarize = {
+                    scope.launch {
+                        selected?.let { article ->
+                            loading = true
+                            runCatching { client().summarize(article.articleId) }.onSuccess {
+                                selected = selected?.copy(summary = it.summary)
+                                status = "Summary ready"
+                            }.onFailure {
+                                status = it.message ?: "Summary failed"
+                            }
+                            loading = false
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
             if (showSettings) {
                 SettingsDialog(
                     apiBase = apiBase,
@@ -258,6 +294,990 @@ fun RssAiApp(openUrl: (String) -> Unit) {
             }
         }
     }
+}
+
+private enum class RssScreen(val label: String) {
+    Feeds("Feeds"),
+    Articles("Articles"),
+    Reader("Reader"),
+    Saved("Saved"),
+}
+
+private object RssColors {
+    val Ink = Color(0xFF06111F)
+    val InkDeep = Color(0xFF020814)
+    val Panel = Color(0xFF101A29)
+    val PanelSoft = Color(0xFF152236)
+    val Line = Color(0xFF263449)
+    val Text = Color(0xFFF4F7FB)
+    val Muted = Color(0xFFA9B4C4)
+    val Dim = Color(0xFF748096)
+    val Blue = Color(0xFF26A7FF)
+    val Violet = Color(0xFFA77BFF)
+    val Green = Color(0xFF1FD96D)
+    val Orange = Color(0xFFFF7A1A)
+    val Red = Color(0xFFFF455C)
+}
+
+@Composable
+private fun ModernRssLayout(
+    feeds: List<Feed>,
+    providers: List<ProviderInfo>,
+    articles: List<Article>,
+    query: String,
+    onQuery: (String) -> Unit,
+    selected: Article?,
+    screen: RssScreen,
+    status: String,
+    loading: Boolean,
+    settings: Settings,
+    openUrl: (String) -> Unit,
+    onScreen: (RssScreen) -> Unit,
+    onRefresh: () -> Unit,
+    onSettings: () -> Unit,
+    onSelectFeed: (Feed?) -> Unit,
+    onSelect: (Article) -> Unit,
+    onToggleSave: () -> Unit,
+    onFetchContent: () -> Unit,
+    onSummarize: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier.background(
+            Brush.verticalGradient(
+                listOf(RssColors.Ink, RssColors.InkDeep),
+            ),
+        ),
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            ModernTopBar(
+                screen = screen,
+                status = status,
+                unreadCount = articles.count { !it.isRead },
+                loading = loading,
+                onSearch = { onScreen(RssScreen.Articles) },
+                onRefresh = onRefresh,
+                onSettings = onSettings,
+            )
+            Box(Modifier.weight(1f)) {
+                when (screen) {
+                    RssScreen.Feeds -> FeedsDashboard(
+                        feeds = feeds,
+                        providers = providers,
+                        articles = articles,
+                        onSelectFeed = onSelectFeed,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    RssScreen.Articles -> ArticlesDashboard(
+                        articles = articles,
+                        query = query,
+                        onQuery = onQuery,
+                        onSelect = onSelect,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    RssScreen.Reader -> ReaderDashboard(
+                        article = selected,
+                        settings = settings,
+                        openUrl = openUrl,
+                        onBack = { onScreen(RssScreen.Articles) },
+                        onToggleSave = onToggleSave,
+                        onFetchContent = onFetchContent,
+                        onSummarize = onSummarize,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    RssScreen.Saved -> ArticlesDashboard(
+                        articles = articles.filter { it.isSaved },
+                        query = query,
+                        onQuery = onQuery,
+                        onSelect = onSelect,
+                        title = "Saved",
+                        emptyTitle = "No saved articles yet",
+                        emptyBody = "Bookmark articles from the reader and they will collect here.",
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            }
+            ModernBottomBar(screen = screen, onScreen = onScreen)
+        }
+    }
+}
+
+@Composable
+private fun ModernTopBar(
+    screen: RssScreen,
+    status: String,
+    unreadCount: Int,
+    loading: Boolean,
+    onSearch: () -> Unit,
+    onRefresh: () -> Unit,
+    onSettings: () -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(start = 20.dp, top = 16.dp, end = 20.dp, bottom = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "RSS Reader",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = RssColors.Text,
+                    fontWeight = FontWeight.Black,
+                )
+                Text(
+                    screen.label,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = RssColors.Blue,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            if (loading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(24.dp),
+                    color = RssColors.Blue,
+                    strokeWidth = 2.dp,
+                )
+                Spacer(Modifier.width(8.dp))
+            }
+            IconButton(onClick = onSearch) {
+                Icon(Icons.Default.Search, contentDescription = "Search", tint = RssColors.Text)
+            }
+            IconButton(onClick = onRefresh) {
+                Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = RssColors.Text)
+            }
+            IconButton(onClick = onSettings) {
+                Icon(Icons.Default.Settings, contentDescription = "Settings", tint = RssColors.Text)
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(
+                Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(RssColors.Violet),
+            )
+            Text("$unreadCount unread", color = RssColors.Muted, style = MaterialTheme.typography.bodyMedium)
+            Text("·", color = RssColors.Dim)
+            Text(status, color = RssColors.Dim, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun ModernBottomBar(screen: RssScreen, onScreen: (RssScreen) -> Unit) {
+    NavigationBar(
+        modifier = Modifier.navigationBarsPadding(),
+        containerColor = Color(0xEE0D1726),
+        tonalElevation = 0.dp,
+    ) {
+        val items = listOf(RssScreen.Feeds, RssScreen.Articles, RssScreen.Reader, RssScreen.Saved)
+        items.forEach { item ->
+            NavigationBarItem(
+                selected = screen == item,
+                onClick = { onScreen(item) },
+                icon = {
+                    when (item) {
+                        RssScreen.Feeds -> Icon(Icons.Default.Article, contentDescription = null)
+                        RssScreen.Articles -> Icon(Icons.Default.Article, contentDescription = null)
+                        RssScreen.Reader -> Icon(Icons.Default.Book, contentDescription = null)
+                        RssScreen.Saved -> Icon(Icons.Default.BookmarkBorder, contentDescription = null)
+                    }
+                },
+                label = { Text(item.label) },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = RssColors.Violet,
+                    selectedTextColor = RssColors.Violet,
+                    indicatorColor = Color(0x3326A7FF),
+                    unselectedIconColor = RssColors.Muted,
+                    unselectedTextColor = RssColors.Muted,
+                ),
+            )
+        }
+    }
+}
+
+@Composable
+private fun FeedsDashboard(
+    feeds: List<Feed>,
+    providers: List<ProviderInfo>,
+    articles: List<Article>,
+    onSelectFeed: (Feed?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    LazyColumn(
+        modifier,
+        contentPadding = PaddingValues(start = 20.dp, top = 8.dp, end = 20.dp, bottom = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            FeedOverviewCard(
+                title = "All Articles",
+                subtitle = "All feeds combined",
+                unread = articles.count { !it.isRead },
+                total = articles.size,
+                accent = RssColors.Blue,
+                enabled = true,
+                onClick = { onSelectFeed(null) },
+            )
+        }
+        items(feeds, key = { it.feedId }) { feed ->
+            val feedArticles = articles.filter { it.source.equals(feed.name, ignoreCase = true) }
+            FeedOverviewCard(
+                title = feed.name,
+                subtitle = feed.url,
+                unread = feedArticles.count { !it.isRead },
+                total = feedArticles.size.takeIf { it > 0 } ?: feed.articleCount,
+                accent = sourceAccent(feed.name),
+                enabled = feed.enabled,
+                onClick = { onSelectFeed(feed) },
+            )
+        }
+        item {
+            ProviderStatusCard(providers = providers)
+        }
+    }
+}
+
+@Composable
+private fun FeedOverviewCard(
+    title: String,
+    subtitle: String,
+    unread: Int,
+    total: Int,
+    accent: Color,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = RssColors.Panel.copy(alpha = if (enabled) 0.92f else 0.54f)),
+        border = BorderStroke(1.dp, if (title == "All Articles") RssColors.Blue else RssColors.Line),
+        shape = RoundedCornerShape(22.dp),
+    ) {
+        Row(
+            Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            SourceBadge(source = title, accent = accent, size = 56)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(title, style = MaterialTheme.typography.titleLarge, color = RssColors.Text, fontWeight = FontWeight.Black)
+                Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = RssColors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                CountPill(text = unread.toString(), active = unread > 0)
+                Text("$total total", style = MaterialTheme.typography.bodySmall, color = RssColors.Muted)
+                Text(if (enabled) "ON" else "OFF", color = if (enabled) RssColors.Blue else RssColors.Dim, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProviderStatusCard(providers: List<ProviderInfo>) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = RssColors.PanelSoft.copy(alpha = 0.78f)),
+        border = BorderStroke(1.dp, RssColors.Line),
+        shape = RoundedCornerShape(22.dp),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("AI Providers", style = MaterialTheme.typography.titleMedium, color = RssColors.Text, fontWeight = FontWeight.Black)
+            if (providers.isEmpty()) {
+                Text("Refresh to load provider status.", color = RssColors.Muted)
+            }
+            providers.forEach { provider ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(if (provider.configured) RssColors.Green else RssColors.Red),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(provider.label, color = RssColors.Text, modifier = Modifier.weight(1f))
+                    Text(if (provider.configured) "ready" else "missing", color = RssColors.Muted)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ArticlesDashboard(
+    articles: List<Article>,
+    query: String,
+    onQuery: (String) -> Unit,
+    onSelect: (Article) -> Unit,
+    modifier: Modifier = Modifier,
+    title: String = "All Articles",
+    emptyTitle: String = "No articles found",
+    emptyBody: String = "Try refreshing feeds or changing the search.",
+) {
+    var unreadOnly by remember { mutableStateOf(false) }
+    var savedOnly by remember { mutableStateOf(false) }
+    var summarizedOnly by remember { mutableStateOf(false) }
+    val filtered = articles.filter { article ->
+        (!unreadOnly || !article.isRead)
+            && (!savedOnly || article.isSaved)
+            && (!summarizedOnly || !article.summary.isNullOrBlank())
+    }
+    LazyColumn(
+        modifier,
+        contentPadding = PaddingValues(start = 20.dp, top = 8.dp, end = 20.dp, bottom = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            Text(title, style = MaterialTheme.typography.headlineSmall, color = RssColors.Text, fontWeight = FontWeight.Black)
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(
+                value = query,
+                onValueChange = onQuery,
+                modifier = Modifier.fillMaxWidth(),
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = RssColors.Violet) },
+                placeholder = { Text("Search articles, sources, summaries") },
+                singleLine = true,
+                shape = RoundedCornerShape(18.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = RssColors.Text,
+                    unfocusedTextColor = RssColors.Text,
+                    focusedContainerColor = RssColors.PanelSoft,
+                    unfocusedContainerColor = RssColors.PanelSoft,
+                    focusedBorderColor = RssColors.Violet,
+                    unfocusedBorderColor = RssColors.Line,
+                    focusedPlaceholderColor = RssColors.Muted,
+                    unfocusedPlaceholderColor = RssColors.Muted,
+                    cursorColor = RssColors.Blue,
+                ),
+            )
+        }
+        item {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                item { FilterPill("Unread", unreadOnly, onClick = { unreadOnly = !unreadOnly }) }
+                item { FilterPill("Saved", savedOnly, onClick = { savedOnly = !savedOnly }) }
+                item { FilterPill("AI summaries", summarizedOnly, onClick = { summarizedOnly = !summarizedOnly }) }
+                item { FilterPill("${filtered.size} shown", true, onClick = {}) }
+            }
+        }
+        if (filtered.isEmpty()) {
+            item {
+                EmptyStateCard(title = emptyTitle, body = emptyBody)
+            }
+        }
+        items(filtered, key = { it.articleId }) { article ->
+            ArticleListCard(article = article, onClick = { onSelect(article) })
+        }
+    }
+}
+
+@Composable
+private fun FilterPill(text: String, active: Boolean, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = if (active) Color(0x3326A7FF) else RssColors.PanelSoft),
+        border = BorderStroke(1.dp, if (active) RssColors.Violet else RssColors.Line),
+        shape = RoundedCornerShape(50.dp),
+    ) {
+        Text(
+            text,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+            color = if (active) RssColors.Text else RssColors.Muted,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+        )
+    }
+}
+
+@Composable
+private fun ArticleListCard(article: Article, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = RssColors.Panel.copy(alpha = if (article.isRead) 0.72f else 0.96f)),
+        border = BorderStroke(1.dp, RssColors.Line),
+        shape = RoundedCornerShape(18.dp),
+    ) {
+        Row(
+            Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(
+                Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(if (article.isRead) RssColors.Dim else RssColors.Violet),
+            )
+            SourceBadge(source = article.source, accent = sourceAccent(article.source), size = 48)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    article.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = RssColors.Text,
+                    fontWeight = FontWeight.Black,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "${article.source} · ${shortDate(article.publishedAt)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = sourceAccent(article.source),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                article.score?.let {
+                    Text(it.toString(), color = RssColors.Violet, fontWeight = FontWeight.Bold)
+                }
+                article.comments?.let {
+                    Text("$it c", color = RssColors.Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                Icon(
+                    if (article.isSaved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                    contentDescription = null,
+                    tint = if (article.isSaved) RssColors.Violet else RssColors.Muted,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReaderDashboard(
+    article: Article?,
+    settings: Settings,
+    openUrl: (String) -> Unit,
+    onBack: () -> Unit,
+    onToggleSave: () -> Unit,
+    onFetchContent: () -> Unit,
+    onSummarize: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (article == null) {
+        LazyColumn(
+            modifier,
+            contentPadding = PaddingValues(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                EmptyStateCard(
+                    title = "Select an article",
+                    body = "Open Articles, tap a story, then read, save, fetch full content, or generate an AI summary.",
+                    action = "Open Articles",
+                    onAction = onBack,
+                )
+            }
+        }
+        return
+    }
+
+    LazyColumn(
+        modifier,
+        contentPadding = PaddingValues(start = 20.dp, top = 8.dp, end = 20.dp, bottom = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = RssColors.Text)
+                }
+                Text(
+                    "${article.source} · ${shortDate(article.publishedAt)}",
+                    modifier = Modifier.weight(1f),
+                    color = RssColors.Muted,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                IconButton(onClick = onToggleSave) {
+                    Icon(
+                        if (article.isSaved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                        contentDescription = "Save",
+                        tint = if (article.isSaved) RssColors.Violet else RssColors.Text,
+                    )
+                }
+            }
+            Text(
+                article.title,
+                style = MaterialTheme.typography.headlineSmall,
+                color = RssColors.Text,
+                fontWeight = FontWeight.Black,
+            )
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                article.score?.let { CountPill(text = it.toString(), active = true) }
+                article.comments?.let { Text("$it comments", color = RssColors.Muted) }
+                Text(settings.llmProvider, color = RssColors.Violet, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = { openUrl(article.link) }, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.OpenInNew, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Open")
+                    }
+                    Button(onClick = onToggleSave, modifier = Modifier.weight(1f)) {
+                        Text(if (article.isSaved) "Unsave" else "Save")
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = onFetchContent, modifier = Modifier.weight(1f)) { Text("Fetch Full") }
+                    Button(onClick = onSummarize, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("AI")
+                    }
+                }
+            }
+        }
+        item {
+            AiSummaryCard(summary = article.summary, onSummarize = onSummarize)
+        }
+        item {
+            ReaderContentCard(content = article.content ?: article.contentPreview ?: article.summary)
+        }
+    }
+}
+
+@Composable
+private fun AiSummaryCard(summary: String?, onSummarize: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = RssColors.PanelSoft.copy(alpha = 0.86f)),
+        border = BorderStroke(1.dp, RssColors.Line),
+        shape = RoundedCornerShape(20.dp),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = RssColors.Violet)
+                Text("AI Summary", style = MaterialTheme.typography.titleLarge, color = RssColors.Violet, fontWeight = FontWeight.Black)
+            }
+            if (summary.isNullOrBlank()) {
+                Text("No AI summary yet. Generate one from the configured backend provider.", color = RssColors.Muted)
+                TextButton(onClick = onSummarize) { Text("Generate summary") }
+            } else {
+                RichArticleText(
+                    content = summary,
+                    modifier = Modifier.fillMaxWidth(),
+                    textSizeSp = 18f,
+                    lineSpacingExtra = 8f,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReaderContentCard(content: String?) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        border = BorderStroke(1.dp, RssColors.Line),
+        shape = RoundedCornerShape(20.dp),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Article Content", style = MaterialTheme.typography.titleLarge, color = RssColors.Text, fontWeight = FontWeight.Black)
+            RichArticleText(
+                content = content?.takeIf { it.isNotBlank() }?.lines()?.take(260)?.joinToString("\n")
+                    ?: "No full content yet. Use Fetch Full to run direct extraction, browser bypass, and Wayback fallback.",
+                modifier = Modifier.fillMaxWidth(),
+                textSizeSp = 18f,
+                lineSpacingExtra = 9f,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RichArticleText(
+    content: String,
+    modifier: Modifier = Modifier,
+    textSizeSp: Float = 18f,
+    lineSpacingExtra: Float = 8f,
+) {
+    val html = remember(content) { safeRichHtml(content) }
+    AndroidView(
+        modifier = modifier,
+        factory = { context ->
+            TextView(context).apply {
+                setTextColor(RssColors.Text.toArgb())
+                setLinkTextColor(RssColors.Violet.toArgb())
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, textSizeSp)
+                setLineSpacing(lineSpacingExtra, 1.08f)
+                includeFontPadding = true
+                linksClickable = true
+                movementMethod = LinkMovementMethod.getInstance()
+                setTextIsSelectable(true)
+            }
+        },
+        update = { view ->
+            view.setTextSize(TypedValue.COMPLEX_UNIT_SP, textSizeSp)
+            view.setLineSpacing(lineSpacingExtra, 1.08f)
+            view.text = htmlToSpanned(html)
+            Linkify.addLinks(view, Linkify.WEB_URLS or Linkify.EMAIL_ADDRESSES)
+            view.movementMethod = LinkMovementMethod.getInstance()
+        },
+    )
+}
+
+private fun htmlToSpanned(html: String): CharSequence {
+    return runCatching {
+        Html.fromHtml(html, Html.FROM_HTML_MODE_COMPACT)
+    }.getOrElse {
+        Html.fromHtml(plainTextToHtml(stripMarkdownArtifacts(html)), Html.FROM_HTML_MODE_COMPACT)
+    }
+}
+
+private enum class HtmlListMode(val tag: String) {
+    Ordered("ol"),
+    Unordered("ul"),
+}
+
+private fun safeRichHtml(content: String): String {
+    val trimmed = content.trim()
+    if (trimmed.isBlank()) {
+        return plainTextToHtml("")
+    }
+    return runCatching {
+        if (looksLikeHtml(trimmed)) {
+            sanitizeExistingHtml(trimmed)
+        } else {
+            markdownToHtml(trimmed)
+        }
+    }.getOrElse {
+        plainTextToHtml(stripMarkdownArtifacts(trimmed))
+    }
+}
+
+private fun looksLikeHtml(content: String): Boolean {
+    return Regex(
+        """</?(p|br|h[1-6]|ul|ol|li|strong|b|em|i|a|blockquote|pre|code)\b""",
+        RegexOption.IGNORE_CASE,
+    ).containsMatchIn(content)
+}
+
+private fun sanitizeExistingHtml(content: String): String {
+    var html = content
+        .replace(Regex("""(?is)<script\b[^>]*>.*?</script>"""), "")
+        .replace(Regex("""(?is)<style\b[^>]*>.*?</style>"""), "")
+        .replace(Regex("""(?is)<svg\b[^>]*>.*?</svg>"""), "")
+        .replace(Regex("""(?is)<head\b[^>]*>.*?</head>"""), "")
+        .replace(Regex("""(?i)\son\w+\s*=\s*(['"]).*?\1"""), "")
+        .replace(Regex("""(?i)javascript:"""), "")
+    Regex("""(?is)<body\b[^>]*>(.*?)</body>""").find(html)?.let {
+        html = it.groupValues[1]
+    }
+    html = html.replace(Regex("""(?is)<img\b[^>]*>""")) { match ->
+        val src = Regex("""(?i)\bsrc\s*=\s*(['"])(.*?)\1""").find(match.value)?.groupValues?.getOrNull(2).orEmpty()
+        val alt = Regex("""(?i)\balt\s*=\s*(['"])(.*?)\1""").find(match.value)?.groupValues?.getOrNull(2).orEmpty()
+        val label = escapeHtml(alt.ifBlank { "Open image" })
+        val href = safeHref(src)
+        if (href == "#") "" else """<p><a href="$href">$label</a></p>"""
+    }
+    return html.ifBlank { plainTextToHtml(stripMarkdownArtifacts(content)) }
+}
+
+private fun markdownToHtml(content: String): String {
+    val html = StringBuilder()
+    val paragraph = mutableListOf<String>()
+    var listMode: HtmlListMode? = null
+    var inCodeBlock = false
+    val codeBlock = StringBuilder()
+
+    fun closeList() {
+        listMode?.let { html.append("</").append(it.tag).append(">") }
+        listMode = null
+    }
+
+    fun openList(mode: HtmlListMode) {
+        if (listMode != mode) {
+            closeList()
+            html.append("<").append(mode.tag).append(">")
+            listMode = mode
+        }
+    }
+
+    fun flushParagraph() {
+        if (paragraph.isEmpty()) return
+        closeList()
+        html.append("<p>")
+            .append(inlineMarkdownToHtml(paragraph.joinToString(" ").trim()))
+            .append("</p>")
+        paragraph.clear()
+    }
+
+    fun flushCodeBlock() {
+        if (codeBlock.isEmpty()) return
+        flushParagraph()
+        closeList()
+        html.append("<pre><code>")
+            .append(escapeHtml(codeBlock.toString().trimEnd()))
+            .append("</code></pre>")
+        codeBlock.clear()
+    }
+
+    content
+        .replace("\r\n", "\n")
+        .replace('\r', '\n')
+        .lines()
+        .forEach { rawLine ->
+            val line = rawLine.trimEnd()
+            val trimmed = line.trim()
+
+            if (trimmed.startsWith("```")) {
+                if (inCodeBlock) {
+                    inCodeBlock = false
+                    flushCodeBlock()
+                } else {
+                    flushParagraph()
+                    closeList()
+                    inCodeBlock = true
+                }
+                return@forEach
+            }
+
+            if (inCodeBlock) {
+                codeBlock.append(rawLine).append('\n')
+                return@forEach
+            }
+
+            if (trimmed.isBlank()) {
+                flushParagraph()
+                closeList()
+                return@forEach
+            }
+
+            Regex("""^(#{1,6})\s+(.+)$""").matchEntire(trimmed)?.let { match ->
+                flushParagraph()
+                closeList()
+                val level = match.groupValues[1].length.coerceIn(2, 4)
+                html.append("<h").append(level).append(">")
+                    .append(inlineMarkdownToHtml(match.groupValues[2]))
+                    .append("</h").append(level).append(">")
+                return@forEach
+            }
+
+            if (Regex("""^[-*_]{3,}$""").matches(trimmed)) {
+                flushParagraph()
+                closeList()
+                html.append("<hr>")
+                return@forEach
+            }
+
+            Regex("""^!\[([^]]*)]\(([^)\s]+)(?:\s+"[^"]*")?\)$""").matchEntire(trimmed)?.let { match ->
+                flushParagraph()
+                closeList()
+                val label = escapeHtml(match.groupValues[1].ifBlank { "Open image" })
+                html.append("""<p><a href="${safeHref(match.groupValues[2])}">$label</a></p>""")
+                return@forEach
+            }
+
+            Regex("""^[-*+•]\s+(.+)$""").matchEntire(trimmed)?.let { match ->
+                flushParagraph()
+                openList(HtmlListMode.Unordered)
+                html.append("<li>").append(inlineMarkdownToHtml(match.groupValues[1])).append("</li>")
+                return@forEach
+            }
+
+            Regex("""^\d+[.)]\s+(.+)$""").matchEntire(trimmed)?.let { match ->
+                flushParagraph()
+                openList(HtmlListMode.Ordered)
+                html.append("<li>").append(inlineMarkdownToHtml(match.groupValues[1])).append("</li>")
+                return@forEach
+            }
+
+            Regex("""^>\s?(.+)$""").matchEntire(trimmed)?.let { match ->
+                flushParagraph()
+                closeList()
+                html.append("<blockquote>")
+                    .append(inlineMarkdownToHtml(match.groupValues[1]))
+                    .append("</blockquote>")
+                return@forEach
+            }
+
+            paragraph.add(trimmed)
+        }
+
+    if (inCodeBlock) flushCodeBlock()
+    flushParagraph()
+    closeList()
+    return html.toString().ifBlank { plainTextToHtml(stripMarkdownArtifacts(content)) }
+}
+
+private fun inlineMarkdownToHtml(text: String): String {
+    var html = escapeHtml(text)
+    html = Regex("""!\[([^]]*)]\(([^)\s]+)(?:\s+&quot;[^&]*&quot;)?\)""").replace(html) { match ->
+        val label = match.groupValues[1].ifBlank { "Open image" }
+        """<a href="${safeHref(match.groupValues[2])}">${escapeHtml(label)}</a>"""
+    }
+    html = Regex("""(?<!!)\[([^]]+)]\(([^)\s]+)(?:\s+&quot;[^&]*&quot;)?\)""").replace(html) { match ->
+        """<a href="${safeHref(match.groupValues[2])}">${match.groupValues[1]}</a>"""
+    }
+    html = Regex("""\*\*([^*]+)\*\*""").replace(html) { "<strong>${it.groupValues[1]}</strong>" }
+    html = Regex("""__([^_]+)__""").replace(html) { "<strong>${it.groupValues[1]}</strong>" }
+    html = Regex("""`([^`]+)`""").replace(html) { "<code>${it.groupValues[1]}</code>" }
+    html = Regex("""(?<!\*)\*([^*\n]+)\*(?!\*)""").replace(html) { "<em>${it.groupValues[1]}</em>" }
+    html = Regex("""(?<!\w)_([^_\n]+)_(?!\w)""").replace(html) { "<em>${it.groupValues[1]}</em>" }
+    return stripLooseMarkdownMarkers(html)
+}
+
+private fun stripLooseMarkdownMarkers(html: String): String {
+    return html
+        .replace("**", "")
+        .replace("__", "")
+        .replace("`", "")
+        .replace(Regex("""(^|\s)#{1,6}\s+"""), "$1")
+}
+
+private fun stripMarkdownArtifacts(content: String): String {
+    var text = content
+        .replace(Regex("""!\[([^]]*)]\(([^)]+)\)""")) { match ->
+            match.groupValues[1].ifBlank { match.groupValues[2] }
+        }
+        .replace(Regex("""(?<!!)\[([^]]+)]\(([^)]+)\)""")) { match ->
+            "${match.groupValues[1]} (${match.groupValues[2]})"
+        }
+    text = text.lines().joinToString("\n") { line ->
+        line
+            .replace(Regex("""^\s{0,3}#{1,6}\s+"""), "")
+            .replace(Regex("""^\s*[-*+]\s+"""), "• ")
+            .replace(Regex("""^\s*\d+[.)]\s+"""), "• ")
+            .replace(Regex("""^\s*>\s?"""), "")
+    }
+    return text
+        .replace("**", "")
+        .replace("__", "")
+        .replace("```", "")
+        .replace("`", "")
+        .trim()
+}
+
+private fun plainTextToHtml(content: String): String {
+    if (content.isBlank()) return "<p></p>"
+    return content
+        .replace("\r\n", "\n")
+        .replace('\r', '\n')
+        .split(Regex("""\n{2,}"""))
+        .joinToString("") { paragraph ->
+            "<p>${escapeHtml(paragraph.trim()).replace("\n", "<br>")}</p>"
+        }
+}
+
+private fun safeHref(raw: String): String {
+    val href = raw
+        .trim()
+        .trim('"', '\'')
+        .replace("&amp;", "&")
+    if (!href.startsWith("http://", ignoreCase = true)
+        && !href.startsWith("https://", ignoreCase = true)
+        && !href.startsWith("mailto:", ignoreCase = true)
+    ) {
+        return "#"
+    }
+    return escapeAttribute(href)
+}
+
+private fun escapeHtml(value: String): String {
+    return value
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+}
+
+private fun escapeAttribute(value: String): String {
+    return escapeHtml(value)
+        .replace("\"", "&quot;")
+        .replace("'", "&#39;")
+}
+
+@Composable
+private fun EmptyStateCard(title: String, body: String, action: String? = null, onAction: (() -> Unit)? = null) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = RssColors.PanelSoft.copy(alpha = 0.82f)),
+        border = BorderStroke(1.dp, RssColors.Line),
+        shape = RoundedCornerShape(22.dp),
+    ) {
+        Column(
+            Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalAlignment = Alignment.Start,
+        ) {
+            Text(title, style = MaterialTheme.typography.titleLarge, color = RssColors.Text, fontWeight = FontWeight.Black)
+            Text(body, color = RssColors.Muted)
+            if (action != null && onAction != null) {
+                Button(onClick = onAction) { Text(action) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CountPill(text: String, active: Boolean) {
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(9.dp))
+            .background(if (active) RssColors.Blue else RssColors.Line)
+            .padding(horizontal = 9.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text, color = RssColors.Text, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun SourceBadge(source: String, accent: Color = sourceAccent(source), size: Int = 48) {
+    Box(
+        Modifier
+            .size(size.dp)
+            .clip(RoundedCornerShape((size / 4).dp))
+            .background(accent),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            sourceInitials(source),
+            color = Color.White,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Black,
+        )
+    }
+}
+
+private fun sourceInitials(source: String): String {
+    val normalized = source.trim()
+    return when {
+        normalized.contains("hacker", ignoreCase = true) -> "Y"
+        normalized.contains("all articles", ignoreCase = true) -> "RSS"
+        normalized.contains("techcrunch", ignoreCase = true) -> "TC"
+        normalized.contains("venture", ignoreCase = true) -> "VB"
+        normalized.contains("openai", ignoreCase = true) -> "AI"
+        normalized.contains("product", ignoreCase = true) -> "P"
+        normalized.isBlank() -> "R"
+        else -> normalized.split(" ").filter { it.isNotBlank() }.take(2).joinToString("") { it.first().uppercase() }.take(2)
+    }
+}
+
+private fun sourceAccent(source: String): Color {
+    return when {
+        source.contains("hacker", ignoreCase = true) -> RssColors.Orange
+        source.contains("techcrunch", ignoreCase = true) -> RssColors.Green
+        source.contains("venture", ignoreCase = true) -> RssColors.Red
+        source.contains("openai", ignoreCase = true) -> Color(0xFF0E766E)
+        source.contains("product", ignoreCase = true) -> Color(0xFFE8562A)
+        source.contains("all articles", ignoreCase = true) -> RssColors.Blue
+        else -> listOf(RssColors.Blue, RssColors.Violet, RssColors.Green, RssColors.Orange)[kotlin.math.abs(source.hashCode()) % 4]
+    }
+}
+
+private fun shortDate(value: String?): String {
+    val text = value.orEmpty()
+    if (text.isBlank()) return "updated"
+    val normalized = text
+        .replace("T", " ")
+        .replace("Z", "")
+    if ("," in normalized) {
+        return normalized.substringAfter(",").trim().split(" ").take(3).joinToString(" ")
+    }
+    return normalized.take(16)
 }
 
 @Composable

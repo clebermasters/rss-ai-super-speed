@@ -60,14 +60,7 @@ class OpenAiCompatibleProvider:
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        response = requests.post(
-            f"{self.api_base}/chat/completions",
-            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-            json=payload,
-            timeout=timeout,
-        )
-        if response.status_code >= 400:
-            raise AiProviderError(f"OpenAI-compatible request failed: {response.status_code} {response.text}")
+        response = self._post_chat_completion(payload, timeout=timeout)
         body = response.json()
         return {
             "id": body.get("id"),
@@ -75,6 +68,32 @@ class OpenAiCompatibleProvider:
             "content": body.get("choices", [{}])[0].get("message", {}).get("content", ""),
             "usage": body.get("usage", {}),
         }
+
+    def _post_chat_completion(self, payload: dict[str, Any], *, timeout: int) -> requests.Response:
+        for _ in range(3):
+            response = requests.post(
+                f"{self.api_base}/chat/completions",
+                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                json=payload,
+                timeout=timeout,
+            )
+            if response.status_code < 400:
+                return response
+            if not self._adapt_chat_payload_after_error(payload, response):
+                raise AiProviderError(f"OpenAI-compatible request failed: {response.status_code} {response.text}")
+        raise AiProviderError(f"OpenAI-compatible request failed after compatibility retries: {response.status_code} {response.text}")
+
+    @staticmethod
+    def _adapt_chat_payload_after_error(payload: dict[str, Any], response: requests.Response) -> bool:
+        message = response.text.lower()
+        changed = False
+        if "max_tokens" in payload and "max_completion_tokens" in message:
+            payload["max_completion_tokens"] = payload.pop("max_tokens")
+            changed = True
+        if "temperature" in payload and "temperature" in message and "unsupported" in message:
+            payload.pop("temperature", None)
+            changed = True
+        return changed
 
     def embedding(self, text: str, *, model: str | None = None, timeout: int = 60) -> dict[str, Any]:
         used_model = model or os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")

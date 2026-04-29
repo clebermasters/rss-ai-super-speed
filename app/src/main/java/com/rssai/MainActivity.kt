@@ -134,6 +134,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
     var providers by remember { mutableStateOf<List<ProviderInfo>>(emptyList()) }
     var showSettings by remember { mutableStateOf(apiBase.isBlank() || apiToken.isBlank()) }
     var showAddFeed by remember { mutableStateOf(false) }
+    var manageFeed by remember { mutableStateOf<Feed?>(null) }
     val scope = rememberCoroutineScope()
 
     fun client() = RssApiClient(apiBase, apiToken)
@@ -197,6 +198,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                 onRefresh = { loadData(refreshFirst = true) },
                 onSettings = { showSettings = true },
                 onAddFeed = { showAddFeed = true },
+                onManageFeed = { manageFeed = it },
                 onSelectFeed = { feed ->
                     val feedQuery = feed?.name.orEmpty()
                     query = feedQuery
@@ -233,7 +235,8 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                         selected?.let { article ->
                             loading = true
                             try {
-                                var result = client().fetchContent(article.articleId)
+                                val wantsAiFormatting = settings.aiContentFormattingEnabled
+                                var result = client().fetchContent(article.articleId, formatWithAi = wantsAiFormatting)
                                 val jobId = result.jobId
                                 if (result.status != "completed" && !jobId.isNullOrBlank()) {
                                     status = result.message ?: "Full-content fetch queued"
@@ -248,11 +251,63 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                                 if (result.status == "failed") {
                                     status = result.message ?: "Fetch failed"
                                 } else if (result.content.isNotBlank()) {
-                                    selected = selected?.copy(content = result.content)
-                                    status = "Fetched via ${result.strategy ?: "unknown"}"
+                                    selected = result.article ?: selected?.copy(
+                                        content = result.content,
+                                        contentAiFormatted = result.contentAiFormatted,
+                                    )
+                                    status = when {
+                                        result.contentAiFormatted -> "Fetched and AI formatted via ${result.strategy ?: "unknown"}"
+                                        wantsAiFormatting && result.contentFormattingAttempted -> result.contentFormattingError?.let { "Fetched; AI formatting failed: $it" }
+                                            ?: "Fetched; AI formatting was not applied"
+                                        wantsAiFormatting -> "Fetched; AI formatting was not applied"
+                                        else -> "Fetched via ${result.strategy ?: "unknown"}"
+                                    }
                                 }
                             } catch (exc: Exception) {
                                 status = exc.message ?: "Fetch failed"
+                            }
+                            loading = false
+                        }
+                    }
+                },
+                onFormatContent = {
+                    scope.launch {
+                        selected?.let { article ->
+                            val currentContent = article.content ?: article.contentPreview ?: article.summary
+                            if (currentContent.isNullOrBlank()) {
+                                status = "No article content available. Fetch full content first."
+                                return@let
+                            }
+                            loading = true
+                            try {
+                                var result = client().formatContent(article.articleId)
+                                val jobId = result.jobId
+                                if (result.status != "completed" && !jobId.isNullOrBlank()) {
+                                    status = result.message ?: "AI formatting queued"
+                                    repeat(30) {
+                                        if (result.status != "completed" && result.status != "failed") {
+                                            delay(3000)
+                                            result = client().contentJob(jobId)
+                                            status = result.message ?: "Format ${result.status}"
+                                        }
+                                    }
+                                }
+                                if (result.status == "failed") {
+                                    status = result.message ?: "AI formatting failed"
+                                } else if (result.content.isNotBlank()) {
+                                    selected = result.article ?: selected?.copy(
+                                        content = result.content,
+                                        contentAiFormatted = result.contentAiFormatted,
+                                    )
+                                    status = if (result.contentAiFormatted) {
+                                        "AI formatted existing content"
+                                    } else {
+                                        result.contentFormattingError?.let { "AI formatting failed: $it" }
+                                            ?: "AI formatting was not applied"
+                                    }
+                                }
+                            } catch (exc: Exception) {
+                                status = exc.message ?: "AI formatting failed"
                             }
                             loading = false
                         }
@@ -312,7 +367,11 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                             status = "Adding RSS feed..."
                             runCatching {
                                 val created = client().createFeed(request)
-                                val refreshError = runCatching { client().refreshFeed(created.feedId) }.exceptionOrNull()
+                                val refreshError = if (created.enabled) {
+                                    runCatching { client().refreshFeed(created.feedId) }.exceptionOrNull()
+                                } else {
+                                    null
+                                }
                                 val bootstrap = client().bootstrap()
                                 feeds = bootstrap.feeds
                                 settings = bootstrap.settings
@@ -323,13 +382,80 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                                 created to refreshError
                             }.onSuccess {
                                 val refreshError = it.second
-                                status = if (refreshError == null) {
+                                status = if (!it.first.enabled) {
+                                    "Added ${it.first.name}"
+                                } else if (refreshError == null) {
                                     "Added and refreshed ${it.first.name}"
                                 } else {
                                     "Added ${it.first.name}; refresh failed"
                                 }
                             }.onFailure {
                                 status = it.message ?: "Add feed failed"
+                            }
+                            loading = false
+                        }
+                    },
+                )
+            }
+            manageFeed?.let { feed ->
+                ManageFeedDialog(
+                    feed = feed,
+                    onDismiss = { manageFeed = null },
+                    onSave = { request ->
+                        manageFeed = null
+                        scope.launch {
+                            loading = true
+                            status = "Updating RSS feed..."
+                            runCatching {
+                                val updated = client().updateFeed(feed.feedId, request)
+                                val refreshError = if (updated.enabled) {
+                                    runCatching { client().refreshFeed(updated.feedId) }.exceptionOrNull()
+                                } else {
+                                    null
+                                }
+                                val bootstrap = client().bootstrap()
+                                feeds = bootstrap.feeds
+                                settings = bootstrap.settings
+                                providers = client().providers().providers
+                                query = ""
+                                articles = client().articles().articles
+                                currentScreen = RssScreen.Feeds
+                                updated to refreshError
+                            }.onSuccess {
+                                status = if (!it.first.enabled) {
+                                    "Updated ${it.first.name}"
+                                } else if (it.second == null) {
+                                    "Updated and refreshed ${it.first.name}"
+                                } else {
+                                    "Updated ${it.first.name}; refresh failed"
+                                }
+                            }.onFailure {
+                                status = it.message ?: "Update feed failed"
+                            }
+                            loading = false
+                        }
+                    },
+                    onDelete = {
+                        manageFeed = null
+                        scope.launch {
+                            loading = true
+                            status = "Removing RSS feed..."
+                            runCatching {
+                                client().deleteFeed(feed.feedId)
+                                val bootstrap = client().bootstrap()
+                                feeds = bootstrap.feeds
+                                settings = bootstrap.settings
+                                providers = client().providers().providers
+                                if (query.equals(feed.name, ignoreCase = true)) {
+                                    query = ""
+                                }
+                                articles = client().articles(query).articles
+                                currentScreen = RssScreen.Feeds
+                                feed
+                            }.onSuccess {
+                                status = "Removed ${it.name}"
+                            }.onFailure {
+                                status = it.message ?: "Remove feed failed"
                             }
                             loading = false
                         }
@@ -380,10 +506,12 @@ private fun ModernRssLayout(
     onRefresh: () -> Unit,
     onSettings: () -> Unit,
     onAddFeed: () -> Unit,
+    onManageFeed: (Feed) -> Unit,
     onSelectFeed: (Feed?) -> Unit,
     onSelect: (Article) -> Unit,
     onToggleSave: () -> Unit,
     onFetchContent: () -> Unit,
+    onFormatContent: () -> Unit,
     onSummarize: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -411,6 +539,7 @@ private fun ModernRssLayout(
                         providers = providers,
                         articles = articles,
                         onAddFeed = onAddFeed,
+                        onManageFeed = onManageFeed,
                         onSelectFeed = onSelectFeed,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -428,6 +557,7 @@ private fun ModernRssLayout(
                         onBack = { onScreen(RssScreen.Articles) },
                         onToggleSave = onToggleSave,
                         onFetchContent = onFetchContent,
+                        onFormatContent = onFormatContent,
                         onSummarize = onSummarize,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -551,6 +681,7 @@ private fun FeedsDashboard(
     providers: List<ProviderInfo>,
     articles: List<Article>,
     onAddFeed: () -> Unit,
+    onManageFeed: (Feed) -> Unit,
     onSelectFeed: (Feed?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -583,6 +714,7 @@ private fun FeedsDashboard(
                 accent = sourceAccent(feed.name),
                 enabled = feed.enabled,
                 onClick = { onSelectFeed(feed) },
+                onManage = { onManageFeed(feed) },
             )
         }
         item {
@@ -630,6 +762,7 @@ private fun FeedOverviewCard(
     accent: Color,
     enabled: Boolean,
     onClick: () -> Unit,
+    onManage: (() -> Unit)? = null,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
@@ -651,6 +784,9 @@ private fun FeedOverviewCard(
                 CountPill(text = unread.toString(), active = unread > 0)
                 Text("$total total", style = MaterialTheme.typography.bodySmall, color = RssColors.Muted)
                 Text(if (enabled) "ON" else "OFF", color = if (enabled) RssColors.Blue else RssColors.Dim, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                if (onManage != null) {
+                    TextButton(onClick = onManage) { Text("Edit") }
+                }
             }
         }
     }
@@ -832,6 +968,7 @@ private fun ReaderDashboard(
     onBack: () -> Unit,
     onToggleSave: () -> Unit,
     onFetchContent: () -> Unit,
+    onFormatContent: () -> Unit,
     onSummarize: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -904,6 +1041,15 @@ private fun ReaderDashboard(
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onClick = onFetchContent, modifier = Modifier.weight(1f)) { Text("Fetch Full") }
+                    Button(
+                        onClick = onFormatContent,
+                        enabled = !(article.content ?: article.contentPreview ?: article.summary).isNullOrBlank(),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Format")
+                    }
                     Button(onClick = onSummarize, modifier = Modifier.weight(1f)) {
                         Icon(Icons.Default.AutoAwesome, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
@@ -916,7 +1062,10 @@ private fun ReaderDashboard(
             AiSummaryCard(summary = article.summary, onSummarize = onSummarize)
         }
         item {
-            ReaderContentCard(content = article.content ?: article.contentPreview ?: article.summary)
+            ReaderContentCard(
+                content = article.content ?: article.contentPreview ?: article.summary,
+                aiFormatted = article.contentAiFormatted,
+            )
         }
     }
 }
@@ -949,14 +1098,19 @@ private fun AiSummaryCard(summary: String?, onSummarize: () -> Unit) {
 }
 
 @Composable
-private fun ReaderContentCard(content: String?) {
+private fun ReaderContentCard(content: String?, aiFormatted: Boolean) {
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.Transparent),
         border = BorderStroke(1.dp, RssColors.Line),
         shape = RoundedCornerShape(20.dp),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Article Content", style = MaterialTheme.typography.titleLarge, color = RssColors.Text, fontWeight = FontWeight.Black)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Article Content", style = MaterialTheme.typography.titleLarge, color = RssColors.Text, fontWeight = FontWeight.Black)
+                if (aiFormatted) {
+                    CountPill(text = "AI formatted", active = true)
+                }
+            }
             RichArticleText(
                 content = content?.takeIf { it.isNotBlank() }
                     ?: "No full content yet. Use Fetch Full to run direct extraction, browser bypass, and Wayback fallback.",
@@ -1065,7 +1219,7 @@ private fun markdownToHtml(content: String): String {
     val codeBlock = StringBuilder()
 
     fun closeList() {
-        listMode?.let { html.append("</").append(it.tag).append(">") }
+        listMode?.let { html.append("</").append(it.tag).append("><br>") }
         listMode = null
     }
 
@@ -1082,7 +1236,7 @@ private fun markdownToHtml(content: String): String {
         closeList()
         html.append("<p>")
             .append(inlineMarkdownToHtml(paragraph.joinToString(" ").trim()))
-            .append("</p>")
+            .append("</p><br>")
         paragraph.clear()
     }
 
@@ -1131,9 +1285,9 @@ private fun markdownToHtml(content: String): String {
                 flushParagraph()
                 closeList()
                 val level = match.groupValues[1].length.coerceIn(2, 4)
-                html.append("<h").append(level).append(">")
+                html.append("<br><h").append(level).append(">")
                     .append(inlineMarkdownToHtml(match.groupValues[2]))
-                    .append("</h").append(level).append(">")
+                    .append("</h").append(level).append("><br>")
                 return@forEach
             }
 
@@ -1155,14 +1309,14 @@ private fun markdownToHtml(content: String): String {
             Regex("""^[-*+•]\s+(.+)$""").matchEntire(trimmed)?.let { match ->
                 flushParagraph()
                 openList(HtmlListMode.Unordered)
-                html.append("<li>").append(inlineMarkdownToHtml(match.groupValues[1])).append("</li>")
+                html.append("<li>").append(inlineMarkdownToHtml(match.groupValues[1])).append("</li><br>")
                 return@forEach
             }
 
             Regex("""^\d+[.)]\s+(.+)$""").matchEntire(trimmed)?.let { match ->
                 flushParagraph()
                 openList(HtmlListMode.Ordered)
-                html.append("<li>").append(inlineMarkdownToHtml(match.groupValues[1])).append("</li>")
+                html.append("<li>").append(inlineMarkdownToHtml(match.groupValues[1])).append("</li><br>")
                 return@forEach
             }
 
@@ -1776,6 +1930,118 @@ private fun AddFeedDialog(
                 }
                 error?.let {
                     Text(it, color = RssColors.Red, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun ManageFeedDialog(
+    feed: Feed,
+    onDismiss: () -> Unit,
+    onSave: (CreateFeedRequest) -> Unit,
+    onDelete: () -> Unit,
+) {
+    var name by remember(feed.feedId) { mutableStateOf(feed.name) }
+    var url by remember(feed.feedId) { mutableStateOf(feed.url) }
+    var tags by remember(feed.feedId) { mutableStateOf(feed.tags.joinToString(", ")) }
+    var limit by remember(feed.feedId) { mutableStateOf(feed.limit.toString()) }
+    var enabled by remember(feed.feedId) { mutableStateOf(feed.enabled) }
+    var confirmDelete by remember(feed.feedId) { mutableStateOf(false) }
+    var error by remember(feed.feedId) { mutableStateOf<String?>(null) }
+
+    fun submit() {
+        val cleanUrl = url.trim()
+        val parsedLimit = limit.trim().toIntOrNull()
+        error = when {
+            cleanUrl.isBlank() -> "RSS URL is required."
+            !cleanUrl.startsWith("https://", ignoreCase = true)
+                && !cleanUrl.startsWith("http://", ignoreCase = true) -> "RSS URL must start with http:// or https://."
+            parsedLimit == null || parsedLimit !in 1..100 -> "Article limit must be a number from 1 to 100."
+            else -> null
+        }
+        if (error != null) {
+            return
+        }
+        onSave(
+            CreateFeedRequest(
+                name = name.trim().ifBlank { feed.name },
+                url = cleanUrl,
+                enabled = enabled,
+                tags = tags.split(",").map { it.trim() }.filter { it.isNotBlank() },
+                limit = parsedLimit ?: feed.limit.coerceIn(1, 100),
+            ),
+        )
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = ::submit) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        title = { Text("Edit RSS Feed") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = {
+                        url = it
+                        error = null
+                    },
+                    label = { Text("RSS URL") },
+                    isError = error != null,
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = limit,
+                    onValueChange = { limit = it.filter(Char::isDigit).take(3) },
+                    label = { Text("Articles per refresh") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = tags,
+                    onValueChange = { tags = it },
+                    label = { Text("Tags") },
+                    placeholder = { Text("tech, ai, security") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(enabled, { enabled = it })
+                    Text("Enable this feed")
+                }
+                error?.let {
+                    Text(it, color = RssColors.Red, style = MaterialTheme.typography.bodySmall)
+                }
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = RssColors.Red.copy(alpha = 0.10f)),
+                    border = BorderStroke(1.dp, RssColors.Red.copy(alpha = 0.42f)),
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Danger zone", color = RssColors.Red, fontWeight = FontWeight.Bold)
+                        Text("Removing this feed stops future refreshes. Existing articles may remain until cleanup.", color = RssColors.Muted)
+                        if (confirmDelete) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(onClick = { confirmDelete = false }) { Text("Keep") }
+                                TextButton(onClick = onDelete) { Text("Delete permanently", color = RssColors.Red) }
+                            }
+                        } else {
+                            TextButton(onClick = { confirmDelete = true }) { Text("Remove feed", color = RssColors.Red) }
+                        }
+                    }
                 }
             }
         },

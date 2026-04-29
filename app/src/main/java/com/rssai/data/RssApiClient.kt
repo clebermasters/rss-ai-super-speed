@@ -24,6 +24,12 @@ class RssApiClient(
     suspend fun createFeed(request: CreateFeedRequest): Feed =
         post("/v1/feeds", json.encodeToString(request))
 
+    suspend fun updateFeed(feedId: String, request: CreateFeedRequest): Feed =
+        put("/v1/feeds/$feedId", json.encodeToString(request))
+
+    suspend fun deleteFeed(feedId: String): DeleteFeedResponse =
+        delete("/v1/feeds/$feedId")
+
     suspend fun refreshFeed(feedId: String): RefreshResponse =
         post("/v1/feeds/$feedId/refresh", "{}")
 
@@ -42,8 +48,11 @@ class RssApiClient(
 
     suspend fun toggleSave(articleId: String): Article = post("/v1/articles/$articleId/toggle-save", "{}")
 
-    suspend fun fetchContent(articleId: String): FetchContentResponse =
-        post("/v1/articles/$articleId/fetch-content", "{}")
+    suspend fun fetchContent(articleId: String, formatWithAi: Boolean = false): FetchContentResponse =
+        post("/v1/articles/$articleId/fetch-content", """{"formatWithAi":$formatWithAi}""")
+
+    suspend fun formatContent(articleId: String): FetchContentResponse =
+        post("/v1/articles/$articleId/format-content", """{"formatWithAi":true}""")
 
     suspend fun contentJob(jobId: String): FetchContentResponse =
         get("/v1/content-jobs/$jobId")
@@ -65,6 +74,8 @@ class RssApiClient(
     private suspend inline fun <reified T> post(path: String, body: String): T = request("POST", path, body)
 
     private suspend inline fun <reified T> put(path: String, body: String): T = request("PUT", path, body)
+
+    private suspend inline fun <reified T> delete(path: String): T = request("DELETE", path)
 
     private suspend inline fun <reified T> request(method: String, path: String, body: String? = null): T =
         withContext(Dispatchers.IO) {

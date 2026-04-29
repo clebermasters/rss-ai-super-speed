@@ -12,14 +12,19 @@ import app  # noqa: E402
 
 
 class FakeStorage:
-    def __init__(self, settings: dict | None = None) -> None:
+    def __init__(self, settings: dict | None = None, article: dict | None = None) -> None:
         self.saved_content = ""
         self.article_updates: list[dict] = []
+        self.jobs: list[dict] = []
         self.settings = settings or {"browserBypassEnabled": True, "browserBypassMode": "on_blocked"}
+        self.article = article or {"articleId": "article-1", "link": "https://example.com/article"}
 
     def get_article(self, article_id: str, include_content: bool = False) -> dict:
-        del include_content
-        return {"articleId": article_id, "link": "https://example.com/article"}
+        article = dict(self.article)
+        article["articleId"] = article_id
+        if include_content and self.saved_content:
+            article["content"] = self.saved_content
+        return article
 
     def get_settings(self) -> dict:
         return self.settings
@@ -34,13 +39,15 @@ class FakeStorage:
         return updates
 
     def create_content_job(self, article_id: str, url: str, options: dict, errors: list[str]) -> dict:
-        return {
+        job = {
             "jobId": "job-1",
             "articleId": article_id,
             "url": url,
             "options": options,
             "errors": errors,
         }
+        self.jobs.append(job)
+        return job
 
 
 class FetchJobRoutingTest(unittest.TestCase):
@@ -61,6 +68,7 @@ class FetchJobRoutingTest(unittest.TestCase):
             status, body = app.handle_fetch_content(storage, "article-1", {})
         self.assertEqual(status, 202)
         self.assertEqual(body["status"], "queued")
+        self.assertFalse(body["formattingRequested"])
         self.assertEqual(body["jobId"], "job-1")
         invoke.assert_called_once_with("job-1")
 
@@ -71,8 +79,40 @@ class FetchJobRoutingTest(unittest.TestCase):
             status, body = app.handle_fetch_content(storage, "article-1", {})
         self.assertEqual(status, 202)
         self.assertEqual(body["status"], "queued")
+        self.assertTrue(body["formattingRequested"])
+        self.assertTrue(storage.jobs[-1]["options"]["formatWithAi"])
         direct.assert_not_called()
         invoke.assert_called_once_with("job-1")
+
+    def test_ai_formatting_payload_queues_async_job_without_saved_setting(self) -> None:
+        storage = FakeStorage({"browserBypassEnabled": True, "browserBypassMode": "on_blocked", "aiContentFormattingEnabled": False})
+        with patch.object(app, "fetch_direct") as direct, \
+            patch.object(app, "_invoke_content_job_async") as invoke:
+            status, body = app.handle_fetch_content(storage, "article-1", {"formatWithAi": True})
+        self.assertEqual(status, 202)
+        self.assertTrue(body["formattingRequested"])
+        self.assertTrue(storage.jobs[-1]["options"]["formatWithAi"])
+        direct.assert_not_called()
+        invoke.assert_called_once_with("job-1")
+
+    def test_format_existing_content_queues_async_job_without_fetching(self) -> None:
+        storage = FakeStorage(article={"articleId": "article-1", "link": "https://example.com/article", "content": "raw content"})
+        with patch.object(app, "_invoke_content_job_async") as invoke:
+            status, body = app.handle_format_existing_content(storage, "article-1", {})
+        self.assertEqual(status, 202)
+        self.assertEqual(body["status"], "queued")
+        self.assertTrue(body["formattingRequested"])
+        self.assertTrue(storage.jobs[-1]["options"]["formatWithAi"])
+        self.assertTrue(storage.jobs[-1]["options"]["formatExistingOnly"])
+        invoke.assert_called_once_with("job-1")
+
+    def test_format_existing_content_requires_content(self) -> None:
+        storage = FakeStorage(article={"articleId": "article-1", "link": "https://example.com/article"})
+        with patch.object(app, "_invoke_content_job_async") as invoke:
+            status, body = app.handle_format_existing_content(storage, "article-1", {})
+        self.assertEqual(status, 400)
+        self.assertIn("No article content", body["error"])
+        invoke.assert_not_called()
 
     def test_content_fetch_job_formats_when_setting_enabled(self) -> None:
         storage = FakeStorage({"browserBypassEnabled": True, "browserBypassMode": "on_blocked", "aiContentFormattingEnabled": True})
@@ -82,7 +122,36 @@ class FetchJobRoutingTest(unittest.TestCase):
             result = app._run_content_fetch_job(storage, job)
         self.assertEqual(storage.saved_content, "## Better Reading\n\nFormatted article text")
         self.assertTrue(storage.article_updates[-1]["contentAiFormatted"])
+        self.assertTrue(result["contentAiFormatted"])
+        self.assertTrue(result["contentFormattingAttempted"])
         self.assertEqual(result["content"], "## Better Reading\n\nFormatted article text")
+
+    def test_content_fetch_job_reports_formatting_failure_and_keeps_original(self) -> None:
+        storage = FakeStorage({"browserBypassEnabled": True, "browserBypassMode": "on_blocked", "aiContentFormattingEnabled": True})
+        job = {"articleId": "article-1", "options": {"formatWithAi": True}, "errors": []}
+        with patch.object(app, "fetch_with_fallbacks", return_value={"strategy": "direct", "content": "raw article text " * 200, "errors": []}), \
+            patch.object(app, "format_article_content_for_mobile", side_effect=RuntimeError("provider unavailable")):
+            result = app._run_content_fetch_job(storage, job)
+        self.assertEqual(storage.saved_content, "raw article text " * 200)
+        self.assertFalse(storage.article_updates[-1]["contentAiFormatted"])
+        self.assertFalse(result["contentAiFormatted"])
+        self.assertTrue(result["contentFormattingAttempted"])
+        self.assertEqual(result["contentFormattingError"], "provider unavailable")
+        self.assertIn("ai_format: provider unavailable", result["errors"])
+
+    def test_format_existing_job_uses_stored_content_without_network_fetch(self) -> None:
+        storage = FakeStorage(
+            {"browserBypassEnabled": True, "browserBypassMode": "on_blocked", "aiContentFormattingEnabled": False},
+            article={"articleId": "article-1", "link": "https://example.com/article", "content": "existing article text " * 200},
+        )
+        job = {"articleId": "article-1", "options": {"formatWithAi": True, "formatExistingOnly": True}, "errors": []}
+        with patch.object(app, "fetch_with_fallbacks") as fetch, \
+            patch.object(app, "format_article_content_for_mobile", return_value="## Formatted\n\nExisting article text"):
+            result = app._run_content_fetch_job(storage, job)
+        fetch.assert_not_called()
+        self.assertEqual(result["strategy"], "existing")
+        self.assertTrue(result["contentAiFormatted"])
+        self.assertEqual(storage.saved_content, "## Formatted\n\nExisting article text")
 
 
 if __name__ == "__main__":

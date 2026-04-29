@@ -18,12 +18,18 @@ Do not add opinions, analysis, introductions, conclusions, disclaimers, or metad
 Remove only obvious navigation, duplicated boilerplate, cookie prompts, newsletter promos, and unrelated page chrome.
 
 Return clean Markdown optimized for mobile reading:
+- Always improve visual structure when the input is flat text; do not return an unchanged plain-text block.
 - Short paragraphs of 1 to 3 sentences.
-- Clear headings only where the source text clearly supports them.
+- Clear, neutral section headings where the source text supports a topic transition.
+- Put exactly one tasteful emoji at the start of each major heading, chosen from the section meaning.
+- Add one blank line before every heading and one blank line after every heading.
+- Add one blank line between paragraphs and around bullet lists so the article breathes on a phone screen.
 - Bullet lists only when the source text is already list-like or clearly enumerates items.
+- Use **bold** sparingly for important names, terms, and takeaways already present in the text.
+- Use *italic* sparingly for source notes or emphasis already present in the text.
 - Keep links as Markdown links when URLs are present.
 - Keep code, commands, logs, and tables readable.
-- Do not use emoji.
+- Use emojis as visual section anchors only; do not decorate every sentence.
 - Output only the formatted article body.
 """
 
@@ -92,8 +98,18 @@ Source: {article.get("source") or ""}
 URL: {article.get("link") or ""}
 Part: {part} of {total}
 
-Format this article text for comfortable mobile reading.
-Preserve the complete meaning and details. Do not summarize or shorten.
+Reformat this article text for comfortable mobile reading.
+
+Make the transformation visible:
+- Split dense or flat text into short paragraphs.
+- Add source-supported Markdown headings for topic changes, each starting with one meaningful emoji.
+- Surround each heading with generous whitespace: one blank line before it and one blank line after it.
+- Add extra breathing room between sections, paragraphs, and lists.
+- Use **bold** and *italic* when they improve scanability without changing meaning.
+- Prefer readable Markdown such as `## 🧭 Context`, `## ⚖️ What happened`, `## 🔎 Why it matters`, but only when those sections are supported by the article.
+- Preserve links, quotes, numbers, names, and details.
+- Do not summarize, shorten, rewrite opinions, or add new information.
+- Do not return the same unstructured text unless the input is already cleanly formatted.
 
 ARTICLE TEXT:
 {chunk}

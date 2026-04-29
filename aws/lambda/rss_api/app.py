@@ -180,6 +180,9 @@ def route(method: str, path: str, event: dict[str, Any]) -> dict[str, Any]:
             if action == "fetch-content":
                 status_code, body = handle_fetch_content(storage, article_id, parse_json_body(event, default={}))
                 return response(status_code, body)
+            if action == "format-content":
+                status_code, body = handle_format_existing_content(storage, article_id, parse_json_body(event, default={}))
+                return response(status_code, body)
             if action == "summarize":
                 return response(200, handle_summarize_article(storage, article_id, parse_json_body(event, default={})))
             if action == "embedding":
@@ -254,12 +257,17 @@ def handle_fetch_content(storage: RssStorage, article_id: str, payload: dict[str
                 "status": "completed",
                 "strategy": "direct",
                 "content": content,
+                "formattingRequested": False,
+                "contentFormattingAttempted": False,
+                "contentAiFormatted": False,
                 "errors": [],
             }
         except Exception as exc:
             direct_errors.append(f"direct: {exc}")
 
-    job = storage.create_content_job(article_id, article["link"], payload, direct_errors)
+    job_options = dict(payload)
+    job_options["formatWithAi"] = format_with_ai
+    job = storage.create_content_job(article_id, article["link"], job_options, direct_errors)
     _invoke_content_job_async(job["jobId"])
     return 202, {
         "articleId": article_id,
@@ -267,8 +275,37 @@ def handle_fetch_content(storage: RssStorage, article_id: str, payload: dict[str
         "status": "queued",
         "strategy": "async",
         "content": "",
+        "formattingRequested": format_with_ai,
+        "contentFormattingAttempted": False,
+        "contentAiFormatted": False,
         "errors": direct_errors,
-        "message": "Full-content fetch queued for browser/Wayback processing",
+        "message": "Full-content fetch queued for extraction and AI formatting" if format_with_ai else "Full-content fetch queued for browser/Wayback processing",
+    }
+
+
+def handle_format_existing_content(storage: RssStorage, article_id: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    article = storage.get_article(article_id, include_content=True)
+    if not article:
+        return 404, {"error": "Article not found"}
+    if not _existing_article_content(article):
+        return 400, {"error": "No article content available to format. Fetch full content first."}
+
+    job_options = dict(payload)
+    job_options["formatWithAi"] = True
+    job_options["formatExistingOnly"] = True
+    job = storage.create_content_job(article_id, article["link"], job_options, [])
+    _invoke_content_job_async(job["jobId"])
+    return 202, {
+        "articleId": article_id,
+        "jobId": job["jobId"],
+        "status": "queued",
+        "strategy": "async",
+        "content": "",
+        "formattingRequested": True,
+        "contentFormattingAttempted": False,
+        "contentAiFormatted": False,
+        "errors": [],
+        "message": "AI readability formatting queued for existing article content",
     }
 
 
@@ -282,6 +319,10 @@ def handle_get_content_job(storage: RssStorage, job_id: str) -> dict[str, Any]:
         "status": job.get("status", "unknown"),
         "strategy": job.get("strategy"),
         "content": "",
+        "formattingRequested": bool((job.get("options") or {}).get("formatWithAi") or (job.get("options") or {}).get("formatContent") or (job.get("options") or {}).get("aiContentFormattingEnabled")),
+        "contentFormattingAttempted": bool(job.get("contentFormattingAttempted", False)),
+        "contentAiFormatted": bool(job.get("contentAiFormatted", False)),
+        "contentFormattingError": job.get("contentFormattingError"),
         "errors": job.get("errors", []),
         "message": job.get("message"),
     }
@@ -290,6 +331,7 @@ def handle_get_content_job(storage: RssStorage, job_id: str) -> dict[str, Any]:
         if article:
             body["article"] = article
             body["content"] = article.get("content") or ""
+            body["contentAiFormatted"] = bool(article.get("contentAiFormatted", body["contentAiFormatted"]))
     return body
 
 
@@ -310,7 +352,8 @@ def _handle_content_fetch_job(event: dict[str, Any]) -> dict[str, Any]:
     job = storage.get_content_job(job_id)
     if not job:
         return {"ok": False, "error": "job not found", "jobId": job_id}
-    storage.update_content_job(job_id, {"status": "running", "message": "Fetching full article content"})
+    running_message = "Formatting existing article content" if (job.get("options") or {}).get("formatExistingOnly") else "Fetching full article content"
+    storage.update_content_job(job_id, {"status": "running", "message": running_message})
     try:
         result = _run_content_fetch_job(storage, job)
         storage.update_content_job(
@@ -318,8 +361,11 @@ def _handle_content_fetch_job(event: dict[str, Any]) -> dict[str, Any]:
             {
                 "status": "completed",
                 "strategy": result.get("strategy"),
+                "contentFormattingAttempted": bool(result.get("contentFormattingAttempted", False)),
+                "contentAiFormatted": bool(result.get("contentAiFormatted", False)),
+                "contentFormattingError": result.get("contentFormattingError"),
                 "errors": result.get("errors", []),
-                "message": "Content fetch completed",
+                "message": _content_job_success_message(result),
                 "completedAt": now_ms(),
             },
         )
@@ -337,18 +383,37 @@ def _handle_content_fetch_job(event: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "jobId": job_id, "error": str(exc)}
 
 
+def _content_job_success_message(result: dict[str, Any]) -> str:
+    if result.get("contentAiFormatted"):
+        if result.get("strategy") == "existing":
+            return "Existing content formatted with AI readability"
+        return "Content fetch completed with AI readability formatting"
+    if result.get("contentFormattingAttempted"):
+        error = result.get("contentFormattingError")
+        return f"Content fetch completed; AI formatting failed: {error}" if error else "Content fetch completed; AI formatting was not applied"
+    return "Content fetch completed"
+
+
 def _run_content_fetch_job(storage: RssStorage, job: dict[str, Any]) -> dict[str, Any]:
     article_id = str(job["articleId"])
-    article = storage.get_article(article_id)
+    payload = job.get("options") or {}
+    article = storage.get_article(article_id, include_content=bool(payload.get("formatExistingOnly")))
     if not article:
         raise RuntimeError("Article not found")
-    payload = job.get("options") or {}
     settings = storage.get_settings()
-    fetched = fetch_with_fallbacks(article["link"], settings, force_browser=_boolish(payload.get("forceBrowser")))
-    content = fetched["content"]
+    if payload.get("formatExistingOnly"):
+        content = _existing_article_content(article)
+        if not content:
+            raise RuntimeError("No article content available to format. Fetch full content first.")
+        fetched = {"strategy": "existing", "errors": []}
+    else:
+        fetched = fetch_with_fallbacks(article["link"], settings, force_browser=_boolish(payload.get("forceBrowser")))
+        content = fetched["content"]
     errors = list(fetched.get("errors", []))
+    formatting_attempted = should_format_content_with_ai(settings, payload)
     formatted = False
-    if should_format_content_with_ai(settings, payload):
+    formatting_error = None
+    if formatting_attempted:
         try:
             content = format_article_content_for_mobile(
                 content,
@@ -358,7 +423,8 @@ def _run_content_fetch_job(storage: RssStorage, job: dict[str, Any]) -> dict[str
             )
             formatted = True
         except Exception as exc:
-            errors.append(f"ai_format: {exc}")
+            formatting_error = str(exc)
+            errors.append(f"ai_format: {formatting_error}")
     storage.save_article_content(article_id, content)
     storage.update_article(
         article_id,
@@ -368,7 +434,20 @@ def _run_content_fetch_job(storage: RssStorage, job: dict[str, Any]) -> dict[str
             "contentAiFormattedAt": now_ms() if formatted else None,
         },
     )
-    return {"articleId": article_id, "strategy": fetched.get("strategy"), "content": content, "errors": errors}
+    return {
+        "articleId": article_id,
+        "strategy": fetched.get("strategy"),
+        "content": content,
+        "formattingRequested": formatting_attempted,
+        "contentFormattingAttempted": formatting_attempted,
+        "contentAiFormatted": formatted,
+        "contentFormattingError": formatting_error,
+        "errors": errors,
+    }
+
+
+def _existing_article_content(article: dict[str, Any]) -> str:
+    return str(article.get("content") or article.get("contentPreview") or article.get("summary") or "").strip()
 
 
 def handle_summarize_article(storage: RssStorage, article_id: str, payload: dict[str, Any]) -> dict[str, Any]:

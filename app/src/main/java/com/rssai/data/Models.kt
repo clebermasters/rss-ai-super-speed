@@ -37,6 +37,7 @@ data class Article(
     val comments: Int? = null,
     val isRead: Boolean = false,
     val isSaved: Boolean = false,
+    val contentAiFormatted: Boolean = false,
 )
 
 @Serializable
@@ -78,6 +79,9 @@ data class CodexAuthResponse(val configured: Boolean = false, val s3Key: String 
 data class RefreshResponse(val fetched: Int = 0, val saved: Int = 0)
 
 @Serializable
+data class DeleteFeedResponse(val deleted: Boolean = false)
+
+@Serializable
 data class SummaryResponse(val articleId: String = "", val summary: String = "")
 
 @Serializable
@@ -87,6 +91,11 @@ data class FetchContentResponse(
     val status: String = "completed",
     val strategy: String? = null,
     val content: String = "",
+    val article: Article? = null,
+    val formattingRequested: Boolean = false,
+    val contentFormattingAttempted: Boolean = false,
+    val contentAiFormatted: Boolean = false,
+    val contentFormattingError: String? = null,
     val errors: List<String> = emptyList(),
     val message: String? = null,
 )

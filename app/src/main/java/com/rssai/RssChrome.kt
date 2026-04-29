@@ -105,20 +105,97 @@ enum class RssScreen(val label: String) {
     Saved("Saved"),
 }
 
+enum class RssThemeMode(val storageValue: String, val label: String) {
+    Dark("dark", "Dark"),
+    Light("light", "Light"),
+    ;
+
+    companion object {
+        fun from(value: String?): RssThemeMode =
+            entries.firstOrNull { it.storageValue == value } ?: Dark
+    }
+}
+
+data class RssPalette(
+    val ink: Color,
+    val inkDeep: Color,
+    val panel: Color,
+    val panelSoft: Color,
+    val line: Color,
+    val text: Color,
+    val muted: Color,
+    val dim: Color,
+    val blue: Color,
+    val violet: Color,
+    val green: Color,
+    val orange: Color,
+    val red: Color,
+    val bottomBar: Color,
+    val selected: Color,
+)
+
+object RssPalettes {
+    val Dark = RssPalette(
+        ink = Color(0xFF06111F),
+        inkDeep = Color(0xFF020814),
+        panel = Color(0xFF101A29),
+        panelSoft = Color(0xFF152236),
+        line = Color(0xFF263449),
+        text = Color(0xFFF4F7FB),
+        muted = Color(0xFFA9B4C4),
+        dim = Color(0xFF748096),
+        blue = Color(0xFF26A7FF),
+        violet = Color(0xFFA77BFF),
+        green = Color(0xFF1FD96D),
+        orange = Color(0xFFFF7A1A),
+        red = Color(0xFFFF455C),
+        bottomBar = Color(0xEE0D1726),
+        selected = Color(0x3326A7FF),
+    )
+
+    val Light = RssPalette(
+        ink = Color(0xFFFFFBF7),
+        inkDeep = Color(0xFFF4F7FC),
+        panel = Color(0xFFFFFFFF),
+        panelSoft = Color(0xFFF7F2FF),
+        line = Color(0xFFE3DEE9),
+        text = Color(0xFF151C27),
+        muted = Color(0xFF626B78),
+        dim = Color(0xFF8C95A3),
+        blue = Color(0xFF148CDF),
+        violet = Color(0xFF8F63E9),
+        green = Color(0xFF11A85A),
+        orange = Color(0xFFFF6B00),
+        red = Color(0xFFE43D52),
+        bottomBar = Color(0xF7FFFFFF),
+        selected = Color(0x228F63E9),
+    )
+
+    fun forMode(mode: RssThemeMode): RssPalette =
+        when (mode) {
+            RssThemeMode.Dark -> Dark
+            RssThemeMode.Light -> Light
+        }
+}
+
 object RssColors {
-    val Ink = Color(0xFF06111F)
-    val InkDeep = Color(0xFF020814)
-    val Panel = Color(0xFF101A29)
-    val PanelSoft = Color(0xFF152236)
-    val Line = Color(0xFF263449)
-    val Text = Color(0xFFF4F7FB)
-    val Muted = Color(0xFFA9B4C4)
-    val Dim = Color(0xFF748096)
-    val Blue = Color(0xFF26A7FF)
-    val Violet = Color(0xFFA77BFF)
-    val Green = Color(0xFF1FD96D)
-    val Orange = Color(0xFFFF7A1A)
-    val Red = Color(0xFFFF455C)
+    var palette: RssPalette = RssPalettes.Dark
+
+    val Ink: Color get() = palette.ink
+    val InkDeep: Color get() = palette.inkDeep
+    val Panel: Color get() = palette.panel
+    val PanelSoft: Color get() = palette.panelSoft
+    val Line: Color get() = palette.line
+    val Text: Color get() = palette.text
+    val Muted: Color get() = palette.muted
+    val Dim: Color get() = palette.dim
+    val Blue: Color get() = palette.blue
+    val Violet: Color get() = palette.violet
+    val Green: Color get() = palette.green
+    val Orange: Color get() = palette.orange
+    val Red: Color get() = palette.red
+    val BottomBar: Color get() = palette.bottomBar
+    val Selected: Color get() = palette.selected
 }
 
 @Composable
@@ -292,7 +369,7 @@ fun ModernTopBar(
 fun ModernBottomBar(screen: RssScreen, onScreen: (RssScreen) -> Unit) {
     NavigationBar(
         modifier = Modifier.navigationBarsPadding(),
-        containerColor = Color(0xEE0D1726),
+        containerColor = RssColors.BottomBar,
         tonalElevation = 0.dp,
     ) {
         val items = listOf(RssScreen.Feeds, RssScreen.Articles, RssScreen.Reader, RssScreen.Saved)
@@ -312,7 +389,7 @@ fun ModernBottomBar(screen: RssScreen, onScreen: (RssScreen) -> Unit) {
                 colors = NavigationBarItemDefaults.colors(
                     selectedIconColor = RssColors.Violet,
                     selectedTextColor = RssColors.Violet,
-                    indicatorColor = Color(0x3326A7FF),
+                    indicatorColor = RssColors.Selected,
                     unselectedIconColor = RssColors.Muted,
                     unselectedTextColor = RssColors.Muted,
                 ),

@@ -121,6 +121,8 @@ fun RichArticleText(
             }
         },
         update = { view ->
+            view.setTextColor(RssColors.Text.toArgb())
+            view.setLinkTextColor(RssColors.Violet.toArgb())
             view.setTextSize(TypedValue.COMPLEX_UNIT_SP, textSizeSp)
             view.setLineSpacing(lineSpacingExtra, 1.08f)
             view.text = htmlToSpanned(html)

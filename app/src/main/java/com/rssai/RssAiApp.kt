@@ -103,6 +103,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
     val prefs = androidx.compose.ui.platform.LocalContext.current.getSharedPreferences("rss-ai", Context.MODE_PRIVATE)
     var apiBase by remember { mutableStateOf(prefs.getString("apiBase", BuildConfig.DEFAULT_RSS_API_BASE_URL).orEmpty()) }
     var apiToken by remember { mutableStateOf(prefs.getString("apiToken", BuildConfig.DEFAULT_RSS_API_TOKEN).orEmpty()) }
+    var themeMode by remember { mutableStateOf(RssThemeMode.from(prefs.getString("themeMode", RssThemeMode.Dark.storageValue))) }
     var feeds by remember { mutableStateOf<List<Feed>>(emptyList()) }
     var articles by remember { mutableStateOf<List<Article>>(emptyList()) }
     var brandNewArticleIds by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -370,16 +371,36 @@ fun RssAiApp(openUrl: (String) -> Unit) {
         }
     }
 
-    MaterialTheme(
-        colorScheme = androidx.compose.material3.darkColorScheme(
-            background = RssColors.Ink,
-            surface = RssColors.Panel,
-            primary = RssColors.Blue,
-            secondary = RssColors.Violet,
-            onBackground = RssColors.Text,
-            onSurface = RssColors.Text,
-        ),
-    ) {
+    val palette = RssPalettes.forMode(themeMode)
+    RssColors.palette = palette
+    val colorScheme = when (themeMode) {
+        RssThemeMode.Dark -> androidx.compose.material3.darkColorScheme(
+            background = palette.ink,
+            surface = palette.panel,
+            surfaceVariant = palette.panelSoft,
+            primary = palette.blue,
+            secondary = palette.violet,
+            outline = palette.line,
+            onBackground = palette.text,
+            onSurface = palette.text,
+            onPrimary = Color.White,
+            onSecondary = Color.White,
+        )
+        RssThemeMode.Light -> androidx.compose.material3.lightColorScheme(
+            background = palette.ink,
+            surface = palette.panel,
+            surfaceVariant = palette.panelSoft,
+            primary = palette.blue,
+            secondary = palette.violet,
+            outline = palette.line,
+            onBackground = palette.text,
+            onSurface = palette.text,
+            onPrimary = Color.White,
+            onSecondary = Color.White,
+        )
+    }
+
+    MaterialTheme(colorScheme = colorScheme) {
         Surface(Modifier.fillMaxSize()) {
             ModernRssLayout(
                 feeds = feeds,
@@ -463,16 +484,19 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                 SettingsDialog(
                     apiBase = apiBase,
                     apiToken = apiToken,
+                    themeMode = themeMode,
                     settings = settings,
                     providers = providers,
                     onDismiss = { showSettings = false },
-                    onSave = { newBase, newToken, newSettings ->
+                    onSave = { newBase, newToken, newThemeMode, newSettings ->
                         apiBase = newBase
                         apiToken = newToken
+                        themeMode = newThemeMode
                         settings = newSettings
                         prefs.edit()
                             .putString("apiBase", apiBase)
                             .putString("apiToken", apiToken)
+                            .putString("themeMode", themeMode.storageValue)
                             .apply()
                         showSettings = false
                         scope.launch {

@@ -128,7 +128,12 @@ fun CountPill(text: String, active: Boolean) {
             .padding(horizontal = 9.dp, vertical = 4.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, color = RssColors.Text, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        Text(
+            text,
+            color = if (active) Color.White else RssColors.Text,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+        )
     }
 }
 

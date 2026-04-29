@@ -138,6 +138,8 @@ fun ReaderDashboard(
     } else {
         "Reader"
     }
+    val readableContent = article.content ?: article.contentPreview ?: article.summary
+    var showWordRunner by remember(article.articleId) { mutableStateOf(false) }
     val swipeModifier = modifier.pointerInput(article.articleId, canGoPrevious, canGoNext) {
         var totalDrag = 0f
         detectHorizontalDragGestures(
@@ -239,6 +241,13 @@ fun ReaderDashboard(
                         Text("AI")
                     }
                 }
+                Button(
+                    onClick = { showWordRunner = true },
+                    enabled = !readableContent.isNullOrBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Word Runner")
+                }
             }
         }
         item {
@@ -246,10 +255,17 @@ fun ReaderDashboard(
         }
         item {
             ReaderContentCard(
-                content = article.content ?: article.contentPreview ?: article.summary,
+                content = readableContent,
                 aiFormatted = article.contentAiFormatted,
             )
         }
+    }
+    if (showWordRunner && !readableContent.isNullOrBlank()) {
+        RsvpReaderDialog(
+            title = article.title,
+            content = readableContent,
+            onDismiss = { showWordRunner = false },
+        )
     }
 }
 

@@ -178,7 +178,7 @@ fun ArticlesDashboard(
 fun FilterPill(text: String, active: Boolean, onClick: () -> Unit) {
     Card(
         modifier = Modifier.clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = if (active) Color(0x3326A7FF) else RssColors.PanelSoft),
+        colors = CardDefaults.cardColors(containerColor = if (active) RssColors.Selected else RssColors.PanelSoft),
         border = BorderStroke(1.dp, if (active) RssColors.Violet else RssColors.Line),
         shape = RoundedCornerShape(50.dp),
     ) {

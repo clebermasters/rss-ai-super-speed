@@ -102,13 +102,15 @@ import kotlinx.coroutines.launch
 fun SettingsDialog(
     apiBase: String,
     apiToken: String,
+    themeMode: RssThemeMode,
     settings: Settings,
     providers: List<ProviderInfo>,
     onDismiss: () -> Unit,
-    onSave: (String, String, Settings) -> Unit,
+    onSave: (String, String, RssThemeMode, Settings) -> Unit,
 ) {
     var base by remember { mutableStateOf(apiBase) }
     var token by remember { mutableStateOf(apiToken) }
+    var selectedThemeMode by remember { mutableStateOf(themeMode) }
     var llmProvider by remember { mutableStateOf(settings.llmProvider) }
     var aiModel by remember { mutableStateOf(settings.aiModel) }
     var codexModel by remember { mutableStateOf(settings.codexModel) }
@@ -125,6 +127,7 @@ fun SettingsDialog(
                     onSave(
                         base,
                         token,
+                        selectedThemeMode,
                         settings.copy(
                             llmProvider = llmProvider,
                             aiModel = aiModel,
@@ -147,6 +150,16 @@ fun SettingsDialog(
             ) {
                 OutlinedTextField(base, { base = it }, label = { Text("API base URL") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(token, { token = it }, label = { Text("API token") }, modifier = Modifier.fillMaxWidth())
+                Text("Appearance", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = selectedThemeMode == RssThemeMode.Light,
+                        onCheckedChange = { useLight ->
+                            selectedThemeMode = if (useLight) RssThemeMode.Light else RssThemeMode.Dark
+                        },
+                    )
+                    Text("Use older light theme")
+                }
                 OutlinedTextField(llmProvider, { llmProvider = it }, label = { Text("LLM provider") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(aiModel, { aiModel = it }, label = { Text("OpenAI-compatible model") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(codexModel, { codexModel = it }, label = { Text("Codex model") }, modifier = Modifier.fillMaxWidth())

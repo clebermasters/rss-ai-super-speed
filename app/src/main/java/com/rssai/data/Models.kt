@@ -15,6 +15,15 @@ data class Feed(
 )
 
 @Serializable
+data class CreateFeedRequest(
+    val name: String? = null,
+    val url: String,
+    val enabled: Boolean = true,
+    val tags: List<String> = emptyList(),
+    val limit: Int = 20,
+)
+
+@Serializable
 data class Article(
     val articleId: String = "",
     val title: String = "",

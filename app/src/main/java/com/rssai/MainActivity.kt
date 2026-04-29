@@ -38,6 +38,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -86,6 +87,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.rssai.data.Article
+import com.rssai.data.CreateFeedRequest
 import com.rssai.data.Feed
 import com.rssai.data.ProviderInfo
 import com.rssai.data.RssApiClient
@@ -131,6 +133,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
     }
     var providers by remember { mutableStateOf<List<ProviderInfo>>(emptyList()) }
     var showSettings by remember { mutableStateOf(apiBase.isBlank() || apiToken.isBlank()) }
+    var showAddFeed by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     fun client() = RssApiClient(apiBase, apiToken)
@@ -193,6 +196,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                 onScreen = { currentScreen = it },
                 onRefresh = { loadData(refreshFirst = true) },
                 onSettings = { showSettings = true },
+                onAddFeed = { showAddFeed = true },
                 onSelectFeed = { feed ->
                     val feedQuery = feed?.name.orEmpty()
                     query = feedQuery
@@ -293,6 +297,45 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                     },
                 )
             }
+            if (showAddFeed) {
+                AddFeedDialog(
+                    onDismiss = { showAddFeed = false },
+                    onSave = { request ->
+                        if (apiBase.isBlank() || apiToken.isBlank()) {
+                            showAddFeed = false
+                            showSettings = true
+                            return@AddFeedDialog
+                        }
+                        showAddFeed = false
+                        scope.launch {
+                            loading = true
+                            status = "Adding RSS feed..."
+                            runCatching {
+                                val created = client().createFeed(request)
+                                val refreshError = runCatching { client().refreshFeed(created.feedId) }.exceptionOrNull()
+                                val bootstrap = client().bootstrap()
+                                feeds = bootstrap.feeds
+                                settings = bootstrap.settings
+                                providers = client().providers().providers
+                                query = ""
+                                articles = client().articles().articles
+                                currentScreen = RssScreen.Feeds
+                                created to refreshError
+                            }.onSuccess {
+                                val refreshError = it.second
+                                status = if (refreshError == null) {
+                                    "Added and refreshed ${it.first.name}"
+                                } else {
+                                    "Added ${it.first.name}; refresh failed"
+                                }
+                            }.onFailure {
+                                status = it.message ?: "Add feed failed"
+                            }
+                            loading = false
+                        }
+                    },
+                )
+            }
         }
     }
 }
@@ -336,6 +379,7 @@ private fun ModernRssLayout(
     onScreen: (RssScreen) -> Unit,
     onRefresh: () -> Unit,
     onSettings: () -> Unit,
+    onAddFeed: () -> Unit,
     onSelectFeed: (Feed?) -> Unit,
     onSelect: (Article) -> Unit,
     onToggleSave: () -> Unit,
@@ -366,6 +410,7 @@ private fun ModernRssLayout(
                         feeds = feeds,
                         providers = providers,
                         articles = articles,
+                        onAddFeed = onAddFeed,
                         onSelectFeed = onSelectFeed,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -505,6 +550,7 @@ private fun FeedsDashboard(
     feeds: List<Feed>,
     providers: List<ProviderInfo>,
     articles: List<Article>,
+    onAddFeed: () -> Unit,
     onSelectFeed: (Feed?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -513,6 +559,9 @@ private fun FeedsDashboard(
         contentPadding = PaddingValues(start = 20.dp, top = 8.dp, end = 20.dp, bottom = 20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        item {
+            AddFeedCard(onClick = onAddFeed)
+        }
         item {
             FeedOverviewCard(
                 title = "All Articles",
@@ -538,6 +587,36 @@ private fun FeedsDashboard(
         }
         item {
             ProviderStatusCard(providers = providers)
+        }
+    }
+}
+
+@Composable
+private fun AddFeedCard(onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = RssColors.Blue.copy(alpha = 0.16f)),
+        border = BorderStroke(1.dp, RssColors.Blue.copy(alpha = 0.74f)),
+        shape = RoundedCornerShape(22.dp),
+    ) {
+        Row(
+            Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(54.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(RssColors.Blue),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, tint = Color.White)
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Add RSS Feed", style = MaterialTheme.typography.titleLarge, color = RssColors.Text, fontWeight = FontWeight.Black)
+                Text("Subscribe to a new site by pasting its RSS URL.", style = MaterialTheme.typography.bodyMedium, color = RssColors.Muted)
+            }
         }
     }
 }
@@ -1607,6 +1686,100 @@ private fun ReaderPane(
             Text(article.content ?: article.contentPreview ?: article.summary ?: "No full content yet. Tap Fetch Full.")
         }
     }
+}
+
+@Composable
+private fun AddFeedDialog(
+    onDismiss: () -> Unit,
+    onSave: (CreateFeedRequest) -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    var url by remember { mutableStateOf("") }
+    var tags by remember { mutableStateOf("") }
+    var limit by remember { mutableStateOf("20") }
+    var enabled by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    fun submit() {
+        val cleanUrl = url.trim()
+        val parsedLimit = limit.trim().toIntOrNull()
+        error = when {
+            cleanUrl.isBlank() -> "RSS URL is required."
+            !cleanUrl.startsWith("https://", ignoreCase = true)
+                && !cleanUrl.startsWith("http://", ignoreCase = true) -> "RSS URL must start with http:// or https://."
+            parsedLimit == null || parsedLimit !in 1..100 -> "Article limit must be a number from 1 to 100."
+            else -> null
+        }
+        if (error != null) {
+            return
+        }
+        onSave(
+            CreateFeedRequest(
+                name = name.trim().ifBlank { null },
+                url = cleanUrl,
+                enabled = enabled,
+                tags = tags.split(",").map { it.trim() }.filter { it.isNotBlank() },
+                limit = parsedLimit ?: 20,
+            ),
+        )
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = ::submit) { Text("Add feed") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        title = { Text("Add RSS Feed") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text("Paste the RSS feed URL for the site you want to follow.", color = RssColors.Muted)
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = {
+                        url = it
+                        error = null
+                    },
+                    label = { Text("RSS URL") },
+                    placeholder = { Text("https://example.com/feed.xml") },
+                    isError = error != null,
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Name, optional") },
+                    placeholder = { Text("Site name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = limit,
+                    onValueChange = { limit = it.filter(Char::isDigit).take(3) },
+                    label = { Text("Articles per refresh") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = tags,
+                    onValueChange = { tags = it },
+                    label = { Text("Tags, optional") },
+                    placeholder = { Text("tech, ai, security") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(enabled, { enabled = it })
+                    Text("Enable this feed")
+                }
+                error?.let {
+                    Text(it, color = RssColors.Red, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+    )
 }
 
 @Composable

@@ -4,8 +4,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -22,6 +20,12 @@ class RssApiClient(
     suspend fun bootstrap(): BootstrapResponse = get("/v1/bootstrap")
 
     suspend fun feeds(): FeedsResponse = get("/v1/feeds")
+
+    suspend fun createFeed(request: CreateFeedRequest): Feed =
+        post("/v1/feeds", json.encodeToString(request))
+
+    suspend fun refreshFeed(feedId: String): RefreshResponse =
+        post("/v1/feeds/$feedId/refresh", "{}")
 
     suspend fun articles(query: String = ""): ArticlesResponse {
         val suffix = if (query.isBlank()) "" else "?query=${query.urlEncode()}"

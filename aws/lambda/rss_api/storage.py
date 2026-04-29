@@ -149,8 +149,25 @@ class RssStorage:
             KeyConditionExpression=Key("pk").eq(USER_PK) & Key("sk").begins_with("FEED#")
         )
         feeds = [self._strip_keys(item) for item in response.get("Items", [])]
+        counts = self._feed_article_counts()
+        for feed in feeds:
+            feed_counts = counts.get(str(feed.get("feedId") or ""), {"total": 0, "unread": 0})
+            feed["articleCount"] = int(feed_counts["total"])
+            feed["unreadCount"] = int(feed_counts["unread"])
         feeds.sort(key=lambda item: item.get("name", "").lower())
         return feeds
+
+    def _feed_article_counts(self) -> dict[str, dict[str, int]]:
+        counts: dict[str, dict[str, int]] = {}
+        for article in self.list_articles({"limit": 5000}):
+            feed_id = str(article.get("sourceFeedId") or "")
+            if not feed_id:
+                continue
+            feed_counts = counts.setdefault(feed_id, {"total": 0, "unread": 0})
+            feed_counts["total"] += 1
+            if not article.get("isRead"):
+                feed_counts["unread"] += 1
+        return counts
 
     def get_feed(self, feed_id: str) -> dict[str, Any] | None:
         item = self.table.get_item(Key={"pk": USER_PK, "sk": f"FEED#{feed_id}"}).get("Item")

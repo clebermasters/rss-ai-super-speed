@@ -694,23 +694,29 @@ private fun FeedsDashboard(
             AddFeedCard(onClick = onAddFeed)
         }
         item {
+            val hasBackendCounts = feeds.any { it.articleCount > 0 || it.unreadCount > 0 }
+            val totalArticles = if (hasBackendCounts) feeds.sumOf { it.articleCount } else articles.size
+            val unreadArticles = if (hasBackendCounts) feeds.sumOf { it.unreadCount } else articles.count { !it.isRead }
             FeedOverviewCard(
                 title = "All Articles",
                 subtitle = "All feeds combined",
-                unread = articles.count { !it.isRead },
-                total = articles.size,
+                unread = unreadArticles,
+                total = totalArticles,
                 accent = RssColors.Blue,
                 enabled = true,
                 onClick = { onSelectFeed(null) },
             )
         }
         items(feeds, key = { it.feedId }) { feed ->
-            val feedArticles = articles.filter { it.source.equals(feed.name, ignoreCase = true) }
+            val feedArticles = articles.filter { article ->
+                article.sourceFeedId == feed.feedId || article.source.equals(feed.name, ignoreCase = true)
+            }
+            val hasBackendCount = feed.articleCount > 0 || feed.unreadCount > 0
             FeedOverviewCard(
                 title = feed.name,
                 subtitle = feed.url,
-                unread = feedArticles.count { !it.isRead },
-                total = feedArticles.size.takeIf { it > 0 } ?: feed.articleCount,
+                unread = if (hasBackendCount) feed.unreadCount else feedArticles.count { !it.isRead },
+                total = feed.articleCount.takeIf { it > 0 } ?: feedArticles.size,
                 accent = sourceAccent(feed.name),
                 enabled = feed.enabled,
                 onClick = { onSelectFeed(feed) },

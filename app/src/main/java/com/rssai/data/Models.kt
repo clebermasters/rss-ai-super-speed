@@ -33,6 +33,7 @@ data class Article(
     val contentPreview: String? = null,
     val publishedAt: String? = null,
     val source: String = "",
+    val sourceFeedId: String? = null,
     val score: Int? = null,
     val comments: Int? = null,
     val isRead: Boolean = false,

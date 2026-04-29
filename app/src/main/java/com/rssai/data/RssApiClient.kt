@@ -48,11 +48,11 @@ class RssApiClient(
 
     suspend fun toggleSave(articleId: String): Article = post("/v1/articles/$articleId/toggle-save", "{}")
 
-    suspend fun fetchContent(articleId: String, formatWithAi: Boolean = false): FetchContentResponse =
-        post("/v1/articles/$articleId/fetch-content", """{"formatWithAi":$formatWithAi}""")
+    suspend fun fetchContent(articleId: String, formatWithAi: Boolean = false, markRead: Boolean = true): FetchContentResponse =
+        post("/v1/articles/$articleId/fetch-content", """{"formatWithAi":$formatWithAi,"markRead":$markRead}""")
 
-    suspend fun formatContent(articleId: String): FetchContentResponse =
-        post("/v1/articles/$articleId/format-content", """{"formatWithAi":true}""")
+    suspend fun formatContent(articleId: String, markRead: Boolean = true): FetchContentResponse =
+        post("/v1/articles/$articleId/format-content", """{"formatWithAi":true,"markRead":$markRead}""")
 
     suspend fun contentJob(jobId: String): FetchContentResponse =
         get("/v1/content-jobs/$jobId")

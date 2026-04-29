@@ -245,13 +245,17 @@ def handle_fetch_content(storage: RssStorage, article_id: str, payload: dict[str
     settings = storage.get_settings()
     direct_errors: list[str] = []
     force_browser = _boolish(payload.get("forceBrowser"))
+    mark_read = _should_mark_read(payload)
     format_with_ai = should_format_content_with_ai(settings, payload)
     browser_mode = str(settings.get("browserBypassMode") or "on_blocked")
     if not force_browser and browser_mode != "always" and not format_with_ai:
         try:
             content = fetch_direct(article["link"])
             storage.save_article_content(article_id, content)
-            storage.update_article(article_id, {"isRead": True, "contentAiFormatted": False})
+            updates = {"contentAiFormatted": False}
+            if mark_read:
+                updates["isRead"] = True
+            storage.update_article(article_id, updates)
             return 200, {
                 "articleId": article_id,
                 "status": "completed",
@@ -267,6 +271,7 @@ def handle_fetch_content(storage: RssStorage, article_id: str, payload: dict[str
 
     job_options = dict(payload)
     job_options["formatWithAi"] = format_with_ai
+    job_options["markRead"] = mark_read
     job = storage.create_content_job(article_id, article["link"], job_options, direct_errors)
     _invoke_content_job_async(job["jobId"])
     return 202, {
@@ -293,6 +298,7 @@ def handle_format_existing_content(storage: RssStorage, article_id: str, payload
     job_options = dict(payload)
     job_options["formatWithAi"] = True
     job_options["formatExistingOnly"] = True
+    job_options["markRead"] = _should_mark_read(payload)
     job = storage.create_content_job(article_id, article["link"], job_options, [])
     _invoke_content_job_async(job["jobId"])
     return 202, {
@@ -426,14 +432,13 @@ def _run_content_fetch_job(storage: RssStorage, job: dict[str, Any]) -> dict[str
             formatting_error = str(exc)
             errors.append(f"ai_format: {formatting_error}")
     storage.save_article_content(article_id, content)
-    storage.update_article(
-        article_id,
-        {
-            "isRead": True,
-            "contentAiFormatted": formatted,
-            "contentAiFormattedAt": now_ms() if formatted else None,
-        },
-    )
+    updates = {
+        "contentAiFormatted": formatted,
+        "contentAiFormattedAt": now_ms() if formatted else None,
+    }
+    if _should_mark_read(payload):
+        updates["isRead"] = True
+    storage.update_article(article_id, updates)
     return {
         "articleId": article_id,
         "strategy": fetched.get("strategy"),
@@ -448,6 +453,12 @@ def _run_content_fetch_job(storage: RssStorage, job: dict[str, Any]) -> dict[str
 
 def _existing_article_content(article: dict[str, Any]) -> str:
     return str(article.get("content") or article.get("contentPreview") or article.get("summary") or "").strip()
+
+
+def _should_mark_read(payload: dict[str, Any]) -> bool:
+    if "markRead" not in payload:
+        return True
+    return _boolish(payload.get("markRead"))
 
 
 def handle_summarize_article(storage: RssStorage, article_id: str, payload: dict[str, Any]) -> dict[str, Any]:

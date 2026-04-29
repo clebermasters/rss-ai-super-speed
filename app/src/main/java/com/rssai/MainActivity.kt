@@ -14,6 +14,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -82,6 +83,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -89,6 +91,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.rssai.data.Article
 import com.rssai.data.CreateFeedRequest
 import com.rssai.data.Feed
+import com.rssai.data.FetchContentResponse
 import com.rssai.data.ProviderInfo
 import com.rssai.data.RssApiClient
 import com.rssai.data.Settings
@@ -116,9 +119,11 @@ fun RssAiApp(openUrl: (String) -> Unit) {
     var feeds by remember { mutableStateOf<List<Feed>>(emptyList()) }
     var articles by remember { mutableStateOf<List<Article>>(emptyList()) }
     var selected by remember { mutableStateOf<Article?>(null) }
+    var readerArticles by remember { mutableStateOf<List<Article>>(emptyList()) }
     var query by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("Configure API or refresh feeds.") }
     var loading by remember { mutableStateOf(false) }
+    var preparingArticleIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var currentScreen by remember { mutableStateOf(RssScreen.Feeds) }
     var settings by remember {
         mutableStateOf(
@@ -138,6 +143,209 @@ fun RssAiApp(openUrl: (String) -> Unit) {
     val scope = rememberCoroutineScope()
 
     fun client() = RssApiClient(apiBase, apiToken)
+
+    fun mergeArticle(base: Article, incoming: Article): Article =
+        incoming.copy(
+            summary = incoming.summary ?: base.summary,
+            content = incoming.content ?: base.content,
+            contentPreview = incoming.contentPreview ?: base.contentPreview,
+            sourceFeedId = incoming.sourceFeedId ?: base.sourceFeedId,
+            score = incoming.score ?: base.score,
+            comments = incoming.comments ?: base.comments,
+        )
+
+    fun updateArticleEverywhere(incoming: Article) {
+        articles = articles.map { article ->
+            if (article.articleId == incoming.articleId) mergeArticle(article, incoming) else article
+        }
+        readerArticles = readerArticles.map { article ->
+            if (article.articleId == incoming.articleId) mergeArticle(article, incoming) else article
+        }
+        selected = selected?.let { article ->
+            if (article.articleId == incoming.articleId) mergeArticle(article, incoming) else article
+        }
+    }
+
+    fun latestArticleSnapshot(article: Article): Article {
+        val local = selected?.takeIf { it.articleId == article.articleId }
+            ?: readerArticles.firstOrNull { it.articleId == article.articleId }
+            ?: articles.firstOrNull { it.articleId == article.articleId }
+            ?: return article
+        return mergeArticle(article, local)
+    }
+
+    fun activeReaderQueue(): List<Article> =
+        readerArticles.ifEmpty { articles }.ifEmpty { selected?.let { listOf(it) } ?: emptyList() }
+
+    fun adjacentArticle(from: Article, delta: Int): Article? {
+        val queue = activeReaderQueue()
+        val index = queue.indexOfFirst { it.articleId == from.articleId }
+        return queue.getOrNull(index + delta)
+    }
+
+    suspend fun awaitContentResult(initial: FetchContentResponse, background: Boolean, actionLabel: String): FetchContentResponse {
+        var result = initial
+        val jobId = result.jobId
+        if (result.status != "completed" && !jobId.isNullOrBlank()) {
+            if (!background) {
+                status = result.message ?: "$actionLabel queued"
+            }
+            repeat(30) {
+                if (result.status != "completed" && result.status != "failed") {
+                    delay(if (background) 5000 else 3000)
+                    result = client().contentJob(jobId)
+                    if (!background) {
+                        status = result.message ?: "$actionLabel ${result.status}"
+                    }
+                }
+            }
+        }
+        return result
+    }
+
+    suspend fun prepareArticleForReading(
+        article: Article,
+        background: Boolean = false,
+        markRead: Boolean = true,
+        forceFetch: Boolean = false,
+        formatOnly: Boolean = false,
+    ): Article? {
+        if (apiBase.isBlank() || apiToken.isBlank()) {
+            if (!background) showSettings = true
+            return null
+        }
+        if (background && article.articleId in preparingArticleIds) {
+            return null
+        }
+        val currentArticle = latestArticleSnapshot(article)
+        val hasFullContent = !currentArticle.content.isNullOrBlank()
+        val needsFormatting = settings.aiContentFormattingEnabled && !currentArticle.contentAiFormatted
+        if (!forceFetch && !formatOnly && hasFullContent && !needsFormatting) {
+            return currentArticle
+        }
+        if (formatOnly && (currentArticle.content ?: currentArticle.contentPreview ?: currentArticle.summary).isNullOrBlank()) {
+            if (!background) {
+                status = "No article content available. Fetch full content first."
+            }
+            return null
+        }
+
+        preparingArticleIds = preparingArticleIds + article.articleId
+        if (!background) {
+            loading = true
+            status = if (formatOnly) "Formatting article for mobile reading..." else "Fetching full article content..."
+        }
+        return try {
+            val shouldFormatExisting = formatOnly || (!forceFetch && hasFullContent && needsFormatting)
+            val actionLabel = if (shouldFormatExisting) "AI formatting" else "Full-content fetch"
+            var result = if (shouldFormatExisting) {
+                client().formatContent(currentArticle.articleId, markRead = markRead)
+            } else {
+                client().fetchContent(
+                    currentArticle.articleId,
+                    formatWithAi = settings.aiContentFormattingEnabled,
+                    markRead = markRead,
+                )
+            }
+            result = awaitContentResult(result, background = background, actionLabel = actionLabel)
+            if (result.status == "failed") {
+                if (!background) {
+                    status = result.message ?: "$actionLabel failed"
+                }
+                return null
+            }
+            if (result.status != "completed") {
+                if (!background) {
+                    status = result.message ?: "$actionLabel is still running"
+                }
+                return null
+            }
+            val updated = result.article
+                ?: if (result.content.isNotBlank()) {
+                    currentArticle.copy(
+                        content = result.content,
+                        contentAiFormatted = result.contentAiFormatted,
+                        isRead = currentArticle.isRead || markRead,
+                    )
+                } else {
+                    runCatching { client().article(currentArticle.articleId) }.getOrNull()
+                }
+            updated?.let {
+                val finalArticle = if (markRead) it.copy(isRead = true) else it
+                updateArticleEverywhere(finalArticle)
+                if (!background) {
+                    status = when {
+                        result.contentAiFormatted -> "Article is fetched and AI formatted"
+                        result.contentFormattingAttempted && result.contentFormattingError != null ->
+                            "Article fetched; AI formatting failed: ${result.contentFormattingError}"
+                        result.contentFormattingAttempted -> "Article fetched; AI formatting was not applied"
+                        shouldFormatExisting -> "AI formatting complete"
+                        else -> "Full article content ready"
+                    }
+                }
+                finalArticle
+            }
+        } catch (exc: Exception) {
+            if (!background) {
+                status = exc.message ?: "Article preparation failed"
+            }
+            null
+        } finally {
+            preparingArticleIds = preparingArticleIds - currentArticle.articleId
+            if (!background) {
+                loading = false
+            }
+        }
+    }
+
+    fun prewarmAdjacentArticle(article: Article, delta: Int) {
+        val next = adjacentArticle(article, delta) ?: return
+        if (next.articleId in preparingArticleIds) return
+        scope.launch {
+            prepareArticleForReading(next, background = true, markRead = false)
+        }
+    }
+
+    fun prewarmAdjacentArticles(article: Article) {
+        prewarmAdjacentArticle(article, -1)
+        prewarmAdjacentArticle(article, 1)
+    }
+
+    fun openArticle(article: Article, queue: List<Article> = activeReaderQueue(), prewarmDelta: Int = 1) {
+        val scopedQueue = queue.takeIf { items -> items.any { it.articleId == article.articleId } }
+            ?: articles.takeIf { items -> items.any { it.articleId == article.articleId } }
+            ?: listOf(article)
+        readerArticles = scopedQueue
+        val localArticle = latestArticleSnapshot(article).copy(isRead = true)
+        selected = localArticle
+        currentScreen = RssScreen.Reader
+        updateArticleEverywhere(localArticle)
+        scope.launch {
+            loading = true
+            val opened = runCatching {
+                client().markRead(localArticle.articleId)
+                client().article(localArticle.articleId).copy(isRead = true)
+            }.getOrElse {
+                localArticle
+            }
+            updateArticleEverywhere(opened)
+            loading = false
+            val currentPreparation = launch {
+                prepareArticleForReading(opened, background = false, markRead = true)
+            }
+            prewarmAdjacentArticles(opened)
+            currentPreparation.join()
+            val prepared = latestArticleSnapshot(opened)
+            prewarmAdjacentArticles(prepared)
+            prewarmAdjacentArticle(prepared, prewarmDelta)
+        }
+    }
+
+    fun navigateArticle(delta: Int) {
+        val current = selected ?: return
+        val target = adjacentArticle(current, delta) ?: return
+        openArticle(target, queue = activeReaderQueue(), prewarmDelta = delta)
+    }
 
     fun loadData(refreshFirst: Boolean = false, searchQuery: String = query) {
         if (apiBase.isBlank() || apiToken.isBlank()) {
@@ -183,6 +391,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                 feeds = feeds,
                 providers = providers,
                 articles = articles,
+                readerArticles = readerArticles,
                 query = query,
                 onQuery = {
                     query = it
@@ -205,27 +414,15 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                     currentScreen = RssScreen.Articles
                     loadData(searchQuery = feedQuery)
                 },
-                onSelect = { article ->
-                    selected = article
-                    currentScreen = RssScreen.Reader
-                    scope.launch {
-                        runCatching {
-                            client().markRead(article.articleId)
-                            client().article(article.articleId)
-                        }.onSuccess {
-                            selected = it
-                            articles = articles.map { existing ->
-                                if (existing.articleId == article.articleId) existing.copy(isRead = true) else existing
-                            }
-                        }
-                    }
+                onSelect = { article, queue ->
+                    openArticle(article, queue = queue)
                 },
+                onNavigateArticle = { delta -> navigateArticle(delta) },
                 onToggleSave = {
                     scope.launch {
                         selected?.let { article ->
                             runCatching { client().toggleSave(article.articleId) }.onSuccess {
-                                selected = it
-                                articles = articles.map { existing -> if (existing.articleId == it.articleId) it else existing }
+                                updateArticleEverywhere(it)
                             }
                         }
                     }
@@ -233,40 +430,8 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                 onFetchContent = {
                     scope.launch {
                         selected?.let { article ->
-                            loading = true
-                            try {
-                                val wantsAiFormatting = settings.aiContentFormattingEnabled
-                                var result = client().fetchContent(article.articleId, formatWithAi = wantsAiFormatting)
-                                val jobId = result.jobId
-                                if (result.status != "completed" && !jobId.isNullOrBlank()) {
-                                    status = result.message ?: "Full-content fetch queued"
-                                    repeat(30) {
-                                        if (result.status != "completed" && result.status != "failed") {
-                                            delay(3000)
-                                            result = client().contentJob(jobId)
-                                            status = result.message ?: "Fetch ${result.status}"
-                                        }
-                                    }
-                                }
-                                if (result.status == "failed") {
-                                    status = result.message ?: "Fetch failed"
-                                } else if (result.content.isNotBlank()) {
-                                    selected = result.article ?: selected?.copy(
-                                        content = result.content,
-                                        contentAiFormatted = result.contentAiFormatted,
-                                    )
-                                    status = when {
-                                        result.contentAiFormatted -> "Fetched and AI formatted via ${result.strategy ?: "unknown"}"
-                                        wantsAiFormatting && result.contentFormattingAttempted -> result.contentFormattingError?.let { "Fetched; AI formatting failed: $it" }
-                                            ?: "Fetched; AI formatting was not applied"
-                                        wantsAiFormatting -> "Fetched; AI formatting was not applied"
-                                        else -> "Fetched via ${result.strategy ?: "unknown"}"
-                                    }
-                                }
-                            } catch (exc: Exception) {
-                                status = exc.message ?: "Fetch failed"
-                            }
-                            loading = false
+                            val prepared = prepareArticleForReading(article, background = false, markRead = true, forceFetch = true)
+                            prewarmAdjacentArticles(prepared ?: article)
                         }
                     }
                 },
@@ -278,38 +443,8 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                                 status = "No article content available. Fetch full content first."
                                 return@let
                             }
-                            loading = true
-                            try {
-                                var result = client().formatContent(article.articleId)
-                                val jobId = result.jobId
-                                if (result.status != "completed" && !jobId.isNullOrBlank()) {
-                                    status = result.message ?: "AI formatting queued"
-                                    repeat(30) {
-                                        if (result.status != "completed" && result.status != "failed") {
-                                            delay(3000)
-                                            result = client().contentJob(jobId)
-                                            status = result.message ?: "Format ${result.status}"
-                                        }
-                                    }
-                                }
-                                if (result.status == "failed") {
-                                    status = result.message ?: "AI formatting failed"
-                                } else if (result.content.isNotBlank()) {
-                                    selected = result.article ?: selected?.copy(
-                                        content = result.content,
-                                        contentAiFormatted = result.contentAiFormatted,
-                                    )
-                                    status = if (result.contentAiFormatted) {
-                                        "AI formatted existing content"
-                                    } else {
-                                        result.contentFormattingError?.let { "AI formatting failed: $it" }
-                                            ?: "AI formatting was not applied"
-                                    }
-                                }
-                            } catch (exc: Exception) {
-                                status = exc.message ?: "AI formatting failed"
-                            }
-                            loading = false
+                            val prepared = prepareArticleForReading(article, background = false, markRead = true, formatOnly = true)
+                            prewarmAdjacentArticles(prepared ?: article)
                         }
                     }
                 },
@@ -318,7 +453,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                         selected?.let { article ->
                             loading = true
                             runCatching { client().summarize(article.articleId) }.onSuccess {
-                                selected = selected?.copy(summary = it.summary)
+                                updateArticleEverywhere(article.copy(summary = it.summary))
                                 status = "Summary ready"
                             }.onFailure {
                                 status = it.message ?: "Summary failed"
@@ -494,6 +629,7 @@ private fun ModernRssLayout(
     feeds: List<Feed>,
     providers: List<ProviderInfo>,
     articles: List<Article>,
+    readerArticles: List<Article>,
     query: String,
     onQuery: (String) -> Unit,
     selected: Article?,
@@ -508,7 +644,8 @@ private fun ModernRssLayout(
     onAddFeed: () -> Unit,
     onManageFeed: (Feed) -> Unit,
     onSelectFeed: (Feed?) -> Unit,
-    onSelect: (Article) -> Unit,
+    onSelect: (Article, List<Article>) -> Unit,
+    onNavigateArticle: (Int) -> Unit,
     onToggleSave: () -> Unit,
     onFetchContent: () -> Unit,
     onFormatContent: () -> Unit,
@@ -552,9 +689,11 @@ private fun ModernRssLayout(
                     )
                     RssScreen.Reader -> ReaderDashboard(
                         article = selected,
+                        readerArticles = readerArticles.ifEmpty { articles },
                         settings = settings,
                         openUrl = openUrl,
                         onBack = { onScreen(RssScreen.Articles) },
+                        onNavigateArticle = onNavigateArticle,
                         onToggleSave = onToggleSave,
                         onFetchContent = onFetchContent,
                         onFormatContent = onFormatContent,
@@ -832,7 +971,7 @@ private fun ArticlesDashboard(
     articles: List<Article>,
     query: String,
     onQuery: (String) -> Unit,
-    onSelect: (Article) -> Unit,
+    onSelect: (Article, List<Article>) -> Unit,
     modifier: Modifier = Modifier,
     title: String = "All Articles",
     emptyTitle: String = "No articles found",
@@ -889,7 +1028,7 @@ private fun ArticlesDashboard(
             }
         }
         items(filtered, key = { it.articleId }) { article ->
-            ArticleListCard(article = article, onClick = { onSelect(article) })
+            ArticleListCard(article = article, onClick = { onSelect(article, filtered) })
         }
     }
 }
@@ -969,9 +1108,11 @@ private fun ArticleListCard(article: Article, onClick: () -> Unit) {
 @Composable
 private fun ReaderDashboard(
     article: Article?,
+    readerArticles: List<Article>,
     settings: Settings,
     openUrl: (String) -> Unit,
     onBack: () -> Unit,
+    onNavigateArticle: (Int) -> Unit,
     onToggleSave: () -> Unit,
     onFetchContent: () -> Unit,
     onFormatContent: () -> Unit,
@@ -987,7 +1128,7 @@ private fun ReaderDashboard(
             item {
                 EmptyStateCard(
                     title = "Select an article",
-                    body = "Open Articles, tap a story, then read, save, fetch full content, or generate an AI summary.",
+                    body = "Open Articles, tap a story, then swipe left or right to keep reading through that list.",
                     action = "Open Articles",
                     onAction = onBack,
                 )
@@ -996,8 +1137,30 @@ private fun ReaderDashboard(
         return
     }
 
+    val currentIndex = readerArticles.indexOfFirst { it.articleId == article.articleId }
+    val canGoPrevious = currentIndex > 0
+    val canGoNext = currentIndex >= 0 && currentIndex < readerArticles.lastIndex
+    val positionLabel = if (currentIndex >= 0 && readerArticles.isNotEmpty()) {
+        "${currentIndex + 1} of ${readerArticles.size}"
+    } else {
+        "Reader"
+    }
+    val swipeModifier = modifier.pointerInput(article.articleId, canGoPrevious, canGoNext) {
+        var totalDrag = 0f
+        detectHorizontalDragGestures(
+            onDragStart = { totalDrag = 0f },
+            onHorizontalDrag = { _, dragAmount -> totalDrag += dragAmount },
+            onDragEnd = {
+                when {
+                    totalDrag < -120f && canGoNext -> onNavigateArticle(1)
+                    totalDrag > 120f && canGoPrevious -> onNavigateArticle(-1)
+                }
+            },
+        )
+    }
+
     LazyColumn(
-        modifier,
+        swipeModifier,
         contentPadding = PaddingValues(start = 20.dp, top = 8.dp, end = 20.dp, bottom = 20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
@@ -1007,7 +1170,7 @@ private fun ReaderDashboard(
                     Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = RssColors.Text)
                 }
                 Text(
-                    "${article.source} · ${shortDate(article.publishedAt)}",
+                    "$positionLabel · ${article.source} · ${shortDate(article.publishedAt)}",
                     modifier = Modifier.weight(1f),
                     color = RssColors.Muted,
                     style = MaterialTheme.typography.bodyMedium,
@@ -1035,6 +1198,27 @@ private fun ReaderDashboard(
         }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    TextButton(
+                        onClick = { onNavigateArticle(-1) },
+                        enabled = canGoPrevious,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Previous")
+                    }
+                    CountPill(text = "Swipe left/right", active = true)
+                    TextButton(
+                        onClick = { onNavigateArticle(1) },
+                        enabled = canGoNext,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Next")
+                    }
+                }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onClick = { openUrl(article.link) }, modifier = Modifier.weight(1f)) {
                         Icon(Icons.Default.OpenInNew, contentDescription = null)

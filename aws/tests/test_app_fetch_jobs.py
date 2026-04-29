@@ -61,6 +61,17 @@ class FetchJobRoutingTest(unittest.TestCase):
         self.assertEqual(storage.saved_content, "content")
         invoke.assert_not_called()
 
+    def test_direct_prefetch_can_keep_article_unread(self) -> None:
+        storage = FakeStorage()
+        with patch.object(app, "fetch_direct", return_value="content"), \
+            patch.object(app, "_invoke_content_job_async") as invoke:
+            status, body = app.handle_fetch_content(storage, "article-1", {"markRead": False})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "completed")
+        self.assertEqual(storage.saved_content, "content")
+        self.assertNotIn("isRead", storage.article_updates[-1])
+        invoke.assert_not_called()
+
     def test_direct_failure_queues_async_job(self) -> None:
         storage = FakeStorage()
         with patch.object(app, "fetch_direct", side_effect=RuntimeError("blocked")), \
@@ -71,6 +82,13 @@ class FetchJobRoutingTest(unittest.TestCase):
         self.assertFalse(body["formattingRequested"])
         self.assertEqual(body["jobId"], "job-1")
         invoke.assert_called_once_with("job-1")
+
+    def test_async_prefetch_can_keep_article_unread(self) -> None:
+        storage = FakeStorage()
+        with patch.object(app, "fetch_direct", side_effect=RuntimeError("blocked")), \
+            patch.object(app, "_invoke_content_job_async"):
+            app.handle_fetch_content(storage, "article-1", {"markRead": False})
+        self.assertFalse(storage.jobs[-1]["options"]["markRead"])
 
     def test_ai_formatting_setting_queues_async_job_without_direct_fetch(self) -> None:
         storage = FakeStorage({"browserBypassEnabled": True, "browserBypassMode": "on_blocked", "aiContentFormattingEnabled": True})
@@ -125,6 +143,14 @@ class FetchJobRoutingTest(unittest.TestCase):
         self.assertTrue(result["contentAiFormatted"])
         self.assertTrue(result["contentFormattingAttempted"])
         self.assertEqual(result["content"], "## Better Reading\n\nFormatted article text")
+
+    def test_content_fetch_job_prefetch_does_not_mark_read(self) -> None:
+        storage = FakeStorage()
+        job = {"articleId": "article-1", "options": {"markRead": False}, "errors": []}
+        with patch.object(app, "fetch_with_fallbacks", return_value={"strategy": "direct", "content": "raw article text", "errors": []}):
+            result = app._run_content_fetch_job(storage, job)
+        self.assertEqual(result["content"], "raw article text")
+        self.assertNotIn("isRead", storage.article_updates[-1])
 
     def test_content_fetch_job_reports_formatting_failure_and_keeps_original(self) -> None:
         storage = FakeStorage({"browserBypassEnabled": True, "browserBypassMode": "on_blocked", "aiContentFormattingEnabled": True})

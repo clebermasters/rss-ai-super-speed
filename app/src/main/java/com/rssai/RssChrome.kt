@@ -126,6 +126,7 @@ fun ModernRssLayout(
     feeds: List<Feed>,
     providers: List<ProviderInfo>,
     articles: List<Article>,
+    brandNewArticleIds: Set<String>,
     readerArticles: List<Article>,
     query: String,
     onQuery: (String) -> Unit,
@@ -161,6 +162,7 @@ fun ModernRssLayout(
                 screen = screen,
                 status = status,
                 unreadCount = articles.count { !it.isRead },
+                newCount = brandNewArticleIds.size,
                 loading = loading,
                 onSearch = { onScreen(RssScreen.Articles) },
                 onRefresh = onRefresh,
@@ -172,6 +174,7 @@ fun ModernRssLayout(
                         feeds = feeds,
                         providers = providers,
                         articles = articles,
+                        brandNewArticleIds = brandNewArticleIds,
                         onAddFeed = onAddFeed,
                         onManageFeed = onManageFeed,
                         onSelectFeed = onSelectFeed,
@@ -179,6 +182,7 @@ fun ModernRssLayout(
                     )
                     RssScreen.Articles -> ArticlesDashboard(
                         articles = articles,
+                        brandNewArticleIds = brandNewArticleIds,
                         query = query,
                         onQuery = onQuery,
                         onSelect = onSelect,
@@ -199,6 +203,7 @@ fun ModernRssLayout(
                     )
                     RssScreen.Saved -> ArticlesDashboard(
                         articles = articles.filter { it.isSaved },
+                        brandNewArticleIds = brandNewArticleIds,
                         query = query,
                         onQuery = onQuery,
                         onSelect = onSelect,
@@ -219,6 +224,7 @@ fun ModernTopBar(
     screen: RssScreen,
     status: String,
     unreadCount: Int,
+    newCount: Int,
     loading: Boolean,
     onSearch: () -> Unit,
     onRefresh: () -> Unit,
@@ -272,6 +278,10 @@ fun ModernTopBar(
                     .background(RssColors.Violet),
             )
             Text("$unreadCount unread", color = RssColors.Muted, style = MaterialTheme.typography.bodyMedium)
+            if (newCount > 0) {
+                Text("·", color = RssColors.Dim)
+                Text("$newCount new", color = RssColors.Blue, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+            }
             Text("·", color = RssColors.Dim)
             Text(status, color = RssColors.Dim, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }

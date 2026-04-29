@@ -105,6 +105,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
     var apiToken by remember { mutableStateOf(prefs.getString("apiToken", BuildConfig.DEFAULT_RSS_API_TOKEN).orEmpty()) }
     var feeds by remember { mutableStateOf<List<Feed>>(emptyList()) }
     var articles by remember { mutableStateOf<List<Article>>(emptyList()) }
+    var brandNewArticleIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var selected by remember { mutableStateOf<Article?>(null) }
     var readerArticles by remember { mutableStateOf<List<Article>>(emptyList()) }
     var query by remember { mutableStateOf("") }
@@ -305,6 +306,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
         readerArticles = scopedQueue
         val localArticle = latestArticleSnapshot(article).copy(isRead = true)
         selected = localArticle
+        brandNewArticleIds = brandNewArticleIds - localArticle.articleId
         currentScreen = RssScreen.Reader
         updateArticleEverywhere(localArticle)
         scope.launch {
@@ -348,8 +350,13 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                 settings = bootstrap.settings
                 providers = client().providers().providers
                 articles = client().articles(searchQuery).articles
+                brandNewArticleIds = detectBrandNewArticleIds(prefs, articles)
             }.onSuccess {
-                status = "Loaded ${articles.size} articles"
+                status = if (brandNewArticleIds.isEmpty()) {
+                    "Loaded ${articles.size} articles"
+                } else {
+                    "Loaded ${articles.size} articles · ${brandNewArticleIds.size} new"
+                }
             }.onFailure {
                 status = it.message ?: "Load failed"
             }
@@ -378,6 +385,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                 feeds = feeds,
                 providers = providers,
                 articles = articles,
+                brandNewArticleIds = brandNewArticleIds,
                 readerArticles = readerArticles,
                 query = query,
                 onQuery = {
@@ -500,6 +508,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                                 providers = client().providers().providers
                                 query = ""
                                 articles = client().articles().articles
+                                brandNewArticleIds = detectBrandNewArticleIds(prefs, articles)
                                 currentScreen = RssScreen.Feeds
                                 created to refreshError
                             }.onSuccess {
@@ -541,6 +550,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                                 providers = client().providers().providers
                                 query = ""
                                 articles = client().articles().articles
+                                brandNewArticleIds = detectBrandNewArticleIds(prefs, articles)
                                 currentScreen = RssScreen.Feeds
                                 updated to refreshError
                             }.onSuccess {
@@ -572,6 +582,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                                     query = ""
                                 }
                                 articles = client().articles(query).articles
+                                brandNewArticleIds = detectBrandNewArticleIds(prefs, articles)
                                 currentScreen = RssScreen.Feeds
                                 feed
                             }.onSuccess {

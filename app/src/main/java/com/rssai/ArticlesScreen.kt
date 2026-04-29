@@ -101,6 +101,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun ArticlesDashboard(
     articles: List<Article>,
+    brandNewArticleIds: Set<String>,
     query: String,
     onQuery: (String) -> Unit,
     onSelect: (Article, List<Article>) -> Unit,
@@ -117,6 +118,7 @@ fun ArticlesDashboard(
             && (!savedOnly || article.isSaved)
             && (!summarizedOnly || !article.summary.isNullOrBlank())
     }
+    val filteredNewCount = filtered.count { it.articleId in brandNewArticleIds }
     LazyColumn(
         modifier,
         contentPadding = PaddingValues(start = 20.dp, top = 8.dp, end = 20.dp, bottom = 20.dp),
@@ -151,6 +153,9 @@ fun ArticlesDashboard(
                 item { FilterPill("Unread", unreadOnly, onClick = { unreadOnly = !unreadOnly }) }
                 item { FilterPill("Saved", savedOnly, onClick = { savedOnly = !savedOnly }) }
                 item { FilterPill("AI summaries", summarizedOnly, onClick = { summarizedOnly = !summarizedOnly }) }
+                if (filteredNewCount > 0) {
+                    item { FilterPill("$filteredNewCount new", true, onClick = {}) }
+                }
                 item { FilterPill("${filtered.size} shown", true, onClick = {}) }
             }
         }
@@ -160,7 +165,11 @@ fun ArticlesDashboard(
             }
         }
         items(filtered, key = { it.articleId }) { article ->
-            ArticleListCard(article = article, onClick = { onSelect(article, filtered) })
+            ArticleListCard(
+                article = article,
+                isBrandNew = article.articleId in brandNewArticleIds,
+                onClick = { onSelect(article, filtered) },
+            )
         }
     }
 }
@@ -184,7 +193,7 @@ fun FilterPill(text: String, active: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-fun ArticleListCard(article: Article, onClick: () -> Unit) {
+fun ArticleListCard(article: Article, isBrandNew: Boolean, onClick: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = RssColors.Panel.copy(alpha = if (article.isRead) 0.72f else 0.96f)),
@@ -198,9 +207,15 @@ fun ArticleListCard(article: Article, onClick: () -> Unit) {
         ) {
             Box(
                 Modifier
-                    .size(8.dp)
+                    .size(if (isBrandNew) 10.dp else 8.dp)
                     .clip(CircleShape)
-                    .background(if (article.isRead) RssColors.Dim else RssColors.Violet),
+                    .background(
+                        when {
+                            isBrandNew -> RssColors.Blue
+                            article.isRead -> RssColors.Dim
+                            else -> RssColors.Violet
+                        },
+                    ),
             )
             SourceBadge(source = article.source, accent = sourceAccent(article.source), size = 48)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -221,6 +236,9 @@ fun ArticleListCard(article: Article, onClick: () -> Unit) {
                 )
             }
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (isBrandNew) {
+                    CountPill(text = "NEW", active = true)
+                }
                 article.score?.let {
                     Text(it.toString(), color = RssColors.Violet, fontWeight = FontWeight.Bold)
                 }

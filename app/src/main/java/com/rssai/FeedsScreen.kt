@@ -103,6 +103,7 @@ fun FeedsDashboard(
     feeds: List<Feed>,
     providers: List<ProviderInfo>,
     articles: List<Article>,
+    brandNewArticleIds: Set<String>,
     onAddFeed: () -> Unit,
     onManageFeed: (Feed) -> Unit,
     onSelectFeed: (Feed?) -> Unit,
@@ -120,10 +121,12 @@ fun FeedsDashboard(
             val hasBackendCounts = feeds.any { it.articleCount > 0 || it.unreadCount > 0 }
             val totalArticles = if (hasBackendCounts) feeds.sumOf { it.articleCount } else articles.size
             val unreadArticles = if (hasBackendCounts) feeds.sumOf { it.unreadCount } else articles.count { !it.isRead }
+            val newArticles = articles.count { it.articleId in brandNewArticleIds }
             FeedOverviewCard(
                 title = "All Articles",
                 subtitle = "All feeds combined",
                 unread = unreadArticles,
+                newCount = newArticles,
                 total = totalArticles,
                 accent = RssColors.Blue,
                 enabled = true,
@@ -135,10 +138,12 @@ fun FeedsDashboard(
                 article.sourceFeedId == feed.feedId || article.source.equals(feed.name, ignoreCase = true)
             }
             val hasBackendCount = feed.articleCount > 0 || feed.unreadCount > 0
+            val newArticles = feedArticles.count { it.articleId in brandNewArticleIds }
             FeedOverviewCard(
                 title = feed.name,
                 subtitle = feed.url,
                 unread = if (hasBackendCount) feed.unreadCount else feedArticles.count { !it.isRead },
+                newCount = newArticles,
                 total = feed.articleCount.takeIf { it > 0 } ?: feedArticles.size,
                 accent = sourceAccent(feed.name),
                 enabled = feed.enabled,
@@ -187,6 +192,7 @@ fun FeedOverviewCard(
     title: String,
     subtitle: String,
     unread: Int,
+    newCount: Int,
     total: Int,
     accent: Color,
     enabled: Boolean,
@@ -210,6 +216,9 @@ fun FeedOverviewCard(
                 Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = RssColors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                if (newCount > 0) {
+                    CountPill(text = "$newCount new", active = true)
+                }
                 CountPill(text = unread.toString(), active = unread > 0)
                 Text("$total total", style = MaterialTheme.typography.bodySmall, color = RssColors.Muted)
                 Text(if (enabled) "ON" else "OFF", color = if (enabled) RssColors.Blue else RssColors.Dim, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)

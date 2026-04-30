@@ -1,0 +1,207 @@
+{
+  "feeds": [
+    {
+      "name": "OpenAI News",
+      "url": "https://openai.com/news/rss.xml",
+      "enabled": true,
+      "tags": ["ai", "openai", "core"],
+      "limit": 20
+    },
+    {
+      "name": "Google AI Blog",
+      "url": "https://blog.google/innovation-and-ai/technology/ai/rss/",
+      "enabled": true,
+      "tags": ["ai", "google", "core"],
+      "limit": 20
+    },
+    {
+      "name": "Google DeepMind",
+      "url": "https://deepmind.google/blog/rss.xml",
+      "enabled": true,
+      "tags": ["ai", "deepmind", "research", "core"],
+      "limit": 20
+    },
+    {
+      "name": "Google Research",
+      "url": "https://research.google/blog/rss/",
+      "enabled": true,
+      "tags": ["ai", "google", "research", "core"],
+      "limit": 20
+    },
+    {
+      "name": "Meta Research",
+      "url": "https://research.facebook.com/feed/",
+      "enabled": true,
+      "tags": ["ai", "meta", "research", "core"],
+      "limit": 20
+    },
+    {
+      "name": "Hugging Face Blog",
+      "url": "https://huggingface.co/blog/feed.xml",
+      "enabled": true,
+      "tags": ["ai", "huggingface", "core"],
+      "limit": 20
+    },
+    {
+      "name": "Microsoft AI Blog",
+      "url": "https://blogs.microsoft.com/ai/feed/",
+      "enabled": true,
+      "tags": ["ai", "microsoft", "core"],
+      "limit": 20
+    },
+    {
+      "name": "AWS Machine Learning Blog",
+      "url": "https://aws.amazon.com/blogs/machine-learning/feed/",
+      "enabled": true,
+      "tags": ["ai", "aws", "machine-learning", "core"],
+      "limit": 20
+    },
+    {
+      "name": "arXiv AI",
+      "url": "https://export.arxiv.org/rss/cs.AI",
+      "enabled": true,
+      "tags": ["ai", "arxiv", "papers", "research"],
+      "limit": 20
+    },
+    {
+      "name": "arXiv Machine Learning",
+      "url": "https://export.arxiv.org/rss/cs.LG",
+      "enabled": true,
+      "tags": ["ai", "arxiv", "machine-learning", "papers", "research"],
+      "limit": 20
+    },
+    {
+      "name": "arXiv NLP",
+      "url": "https://export.arxiv.org/rss/cs.CL",
+      "enabled": true,
+      "tags": ["ai", "arxiv", "nlp", "papers", "research"],
+      "limit": 20
+    },
+    {
+      "name": "arXiv Computer Vision",
+      "url": "https://export.arxiv.org/rss/cs.CV",
+      "enabled": true,
+      "tags": ["ai", "arxiv", "computer-vision", "papers", "research"],
+      "limit": 20
+    },
+    {
+      "name": "BAIR Blog",
+      "url": "https://bair.berkeley.edu/blog/feed.xml",
+      "enabled": true,
+      "tags": ["ai", "bair", "research"],
+      "limit": 20
+    },
+    {
+      "name": "MIT News AI",
+      "url": "https://news.mit.edu/rss/topic/artificial-intelligence2",
+      "enabled": true,
+      "tags": ["ai", "mit", "research"],
+      "limit": 20
+    },
+    {
+      "name": "Simon Willison LLMs",
+      "url": "https://simonwillison.net/tags/llms.atom",
+      "enabled": true,
+      "tags": ["ai", "llm", "analysis"],
+      "limit": 20
+    },
+    {
+      "name": "Import AI by Jack Clark",
+      "url": "https://jack-clark.net/feed/",
+      "enabled": true,
+      "tags": ["ai", "analysis", "newsletter"],
+      "limit": 20
+    },
+    {
+      "name": "The Gradient",
+      "url": "https://thegradientpub.substack.com/feed",
+      "enabled": true,
+      "tags": ["ai", "analysis", "research"],
+      "limit": 20
+    },
+    {
+      "name": "Latent Space",
+      "url": "https://www.latent.space/feed",
+      "enabled": true,
+      "tags": ["ai", "llm", "analysis", "newsletter"],
+      "limit": 20
+    },
+    {
+      "name": "Interconnects",
+      "url": "https://www.interconnects.ai/feed",
+      "enabled": true,
+      "tags": ["ai", "analysis", "newsletter"],
+      "limit": 20
+    },
+    {
+      "name": "Ahead of AI",
+      "url": "https://magazine.sebastianraschka.com/feed",
+      "enabled": true,
+      "tags": ["ai", "machine-learning", "analysis", "newsletter"],
+      "limit": 20
+    },
+    {
+      "name": "One Useful Thing",
+      "url": "https://www.oneusefulthing.org/feed",
+      "enabled": true,
+      "tags": ["ai", "analysis", "newsletter"],
+      "limit": 20
+    },
+    {
+      "name": "MIT Technology Review AI",
+      "url": "https://www.technologyreview.com/topic/artificial-intelligence/feed",
+      "enabled": true,
+      "tags": ["ai", "industry-news"],
+      "limit": 20
+    },
+    {
+      "name": "VentureBeat AI",
+      "url": "https://venturebeat.com/category/ai/feed",
+      "enabled": true,
+      "tags": ["ai", "industry-news"],
+      "limit": 20
+    },
+    {
+      "name": "The Decoder",
+      "url": "https://the-decoder.com/feed/",
+      "enabled": true,
+      "tags": ["ai", "industry-news"],
+      "limit": 20
+    },
+    {
+      "name": "InfoQ AI/ML/Data Engineering",
+      "url": "https://feed.infoq.com/ai-ml-data-eng/news/",
+      "enabled": true,
+      "tags": ["ai", "machine-learning", "data-engineering", "industry-news"],
+      "limit": 20
+    },
+    {
+      "name": "LangChain Blog",
+      "url": "https://www.langchain.com/blog/rss.xml",
+      "enabled": true,
+      "tags": ["ai", "developer", "llm"],
+      "limit": 20
+    },
+    {
+      "name": "NVIDIA Generative AI Technical Blog",
+      "url": "https://developer.nvidia.com/blog/category/generative-ai/feed/",
+      "enabled": true,
+      "tags": ["ai", "nvidia", "generative-ai", "developer"],
+      "limit": 20
+    },
+    {
+      "name": "NVIDIA Deep Learning Blog",
+      "url": "https://blogs.nvidia.com/blog/category/deep-learning/feed/",
+      "enabled": true,
+      "tags": ["ai", "nvidia", "deep-learning", "developer"],
+      "limit": 20
+    },
+    {
+      "name": "Machine Learning Mastery",
+      "url": "https://machinelearningmastery.com/feed/",
+      "enabled": true,
+      "tags": ["ai", "machine-learning", "developer"],
+      "limit": 20
+    }
+  ]
+}

@@ -68,6 +68,29 @@ cargo build --release
 ./target/release/rss-ai --search "artificial intelligence" --fuzzy
 ```
 
+### RSS Subscription Import/Export
+
+The Android/serverless backend stores RSS subscriptions in DynamoDB, but the helper script uses the backend API so you do not need direct DynamoDB access.
+
+```bash
+# Export subscriptions as JSON
+python3 scripts/rss_subscriptions.py export --format json --output subscriptions.json
+
+# Export subscriptions as OPML for other RSS readers
+python3 scripts/rss_subscriptions.py export --format opml --output subscriptions.opml
+
+# Import JSON or OPML subscriptions without changing anything
+python3 scripts/rss_subscriptions.py import subscriptions.opml --dry-run
+
+# Import and update existing feeds matched by URL
+python3 scripts/rss_subscriptions.py import subscriptions.opml
+
+# Make backend feeds exactly match the import file
+python3 scripts/rss_subscriptions.py import subscriptions.opml --replace
+```
+
+By default it reads API configuration from `.env` and `aws/generated/rss-api.env`.
+
 ## Features
 
 ### Filtering & Search

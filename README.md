@@ -68,6 +68,50 @@ cargo build --release
 ./target/release/rss-ai --search "artificial intelligence" --fuzzy
 ```
 
+### RSS Subscription Import/Export
+
+The Android/serverless backend stores RSS subscriptions in DynamoDB, but the helper script uses the backend API so you do not need direct DynamoDB access.
+
+```bash
+# Export subscriptions as JSON
+python3 scripts/rss_subscriptions.py export --format json --output subscriptions.json
+
+# Export subscriptions as OPML for other RSS readers
+python3 scripts/rss_subscriptions.py export --format opml --output subscriptions.opml
+
+# Import JSON or OPML subscriptions without changing anything
+python3 scripts/rss_subscriptions.py import subscriptions.opml --dry-run
+
+# Import and update existing feeds matched by URL
+python3 scripts/rss_subscriptions.py import subscriptions.opml
+
+# Make backend feeds exactly match the import file
+python3 scripts/rss_subscriptions.py import subscriptions.opml --replace
+```
+
+By default it reads API configuration from `.env` and `aws/generated/rss-api.env`.
+
+### Vue Web App on S3
+
+The serverless backend can also power a static Vue web app hosted as an S3 website. The deploy script creates/updates the Terraform-managed website bucket, builds the Vue app, writes a generated runtime config, and syncs the compiled assets to S3.
+
+```bash
+# Uses the existing backend API URL from aws/generated/rss-api.env or Terraform output
+aws/scripts/deploy_web_app.sh
+```
+
+Defaults:
+
+```bash
+WEB_DOMAIN_NAME=rss.bitslovers.com
+WEB_EMBED_API_TOKEN=0
+WEB_THEME=warm
+```
+
+`WEB_EMBED_API_TOKEN` defaults to `0` so the public static site receives the API URL but not the API token. Enter the token once in the web app settings; it is stored in that browser's local storage. If you intentionally want a fully preconfigured personal static build, run with `WEB_EMBED_API_TOKEN=1`.
+
+After deployment, create a DNS CNAME for `rss.bitslovers.com` pointing to the S3 website endpoint printed by the script. This direct S3 website hosting is HTTP-only; add CloudFront later if HTTPS is required for the custom domain.
+
 ## Features
 
 ### Filtering & Search

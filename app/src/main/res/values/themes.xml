@@ -1,0 +1,8 @@
+<resources>
+    <style name="Theme.RssAi" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@color/rssai_background</item>
+        <item name="android:colorAccent">#A44E24</item>
+    </style>
+</resources>

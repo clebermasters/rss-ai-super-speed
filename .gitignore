@@ -1,9 +1,35 @@
 # Build artifacts
 target/
+build/
+app/build/
+web/dist/
+web/node_modules/
+.gradle/
 *.exe
 *.dll
 *.so
 *.dylib
+*.apk
+*.keystore
+app/debug.keystore
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Terraform
+.terraform/
+aws/terraform/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+
+# AWS build outputs
+aws/dist/
+aws/generated/
+screenshots/
 
 # IDE
 .idea/
@@ -29,3 +55,7 @@ Thumbs.db
 # Temporary
 *.tmp
 *.temp
+
+# Local agent/session state
+.omc/
+.codex/sessions/

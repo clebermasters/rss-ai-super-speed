@@ -1,0 +1,4 @@
+boto3>=1.34.0
+beautifulsoup4>=4.12.0
+html2text>=2024.2.26
+playwright>=1.48.0

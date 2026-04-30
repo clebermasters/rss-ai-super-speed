@@ -1,0 +1,3 @@
+-keepattributes Signature
+-keep class kotlinx.serialization.** { *; }
+-keep @kotlinx.serialization.Serializable class * { *; }

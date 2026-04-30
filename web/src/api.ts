@@ -1,4 +1,4 @@
-import type { Article, ArticlesResponse, BootstrapResponse, FeedsResponse, FetchContentResponse, RefreshResponse, Settings, SpeechOptions } from './types';
+import type { Article, ArticlesResponse, BootstrapResponse, FeedsResponse, FetchContentResponse, RefreshResponse, Settings, SpeechAudio, SpeechJobResponse, SpeechOptions } from './types';
 
 export class RssApiError extends Error {
   constructor(message: string, public status = 0) {
@@ -75,7 +75,11 @@ export class RssApiClient {
     return this.request('PUT', '/v1/settings', settings);
   }
 
-  async speech(articleId: string, options: SpeechOptions): Promise<Blob> {
+  async speech(articleId: string, options: SpeechOptions): Promise<SpeechAudio> {
+    return this.requestSpeech(articleId, options, true);
+  }
+
+  private async requestSpeech(articleId: string, options: SpeechOptions, allowAsync: boolean): Promise<SpeechAudio> {
     const response = await fetch(this.url(`/v1/articles/${encodeURIComponent(articleId)}/tts`), {
       method: 'POST',
       headers: this.headers('audio/mpeg', true),
@@ -84,10 +88,54 @@ export class RssApiClient {
         segmentPercent: options.segmentPercent || (options.target === 'content' ? 30 : 100),
         segmentIndex: options.segmentIndex || 0,
         forceRefresh: Boolean(options.forceRefresh),
+        async: allowAsync,
       }),
     });
+    if (response.status === 202) {
+      const job = (await response.json()) as SpeechJobResponse;
+      await this.waitForSpeechJob(job.jobId);
+      return this.requestSpeech(articleId, { ...options, forceRefresh: false }, false);
+    }
     if (!response.ok) throw new RssApiError(await safeError(response), response.status);
-    return response.blob();
+    const contentType = response.headers.get('content-type') || 'audio/mpeg';
+    if (!contentType.toLowerCase().startsWith('audio/')) {
+      throw new RssApiError(`Expected audio but received ${contentType}`, response.status);
+    }
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength < 512) {
+      throw new RssApiError(`Generated audio is unexpectedly small (${buffer.byteLength} bytes). Regenerate this segment.`, response.status);
+    }
+    return {
+      blob: new Blob([buffer], { type: contentType }),
+      contentType,
+      cacheKey: response.headers.get('x-rss-ai-cache-key'),
+      cacheStatus: response.headers.get('x-rss-ai-cache') || 'miss',
+      segmentIndex: intHeader(response.headers, 'x-rss-ai-segment-index', options.segmentIndex || 0),
+      segmentCount: intHeader(response.headers, 'x-rss-ai-segment-count', 1),
+      segmentPercent: intHeader(response.headers, 'x-rss-ai-segment-percent', options.segmentPercent || 100),
+      inputChars: intHeader(response.headers, 'x-rss-ai-input-chars', 0),
+      sourceChars: intHeader(response.headers, 'x-rss-ai-source-chars', 0),
+    };
+  }
+
+  private speechJob(jobId: string): Promise<SpeechJobResponse> {
+    return this.request('GET', `/v1/audio-jobs/${encodeURIComponent(jobId)}`);
+  }
+
+  private async waitForSpeechJob(jobId: string): Promise<SpeechJobResponse> {
+    const startedAt = Date.now();
+    let delayMs = 1500;
+    while (Date.now() - startedAt < 140000) {
+      await sleep(delayMs);
+      const job = await this.speechJob(jobId);
+      if (job.status === 'completed') return job;
+      if (job.status === 'failed') {
+        const detail = job.message || job.errors?.[0] || 'Audio generation failed.';
+        throw new RssApiError(detail, 502);
+      }
+      delayMs = Math.min(3500, delayMs + 500);
+    }
+    throw new RssApiError('Audio generation is still running. Try Listen again in a moment; the cached result should be ready shortly.', 202);
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -113,6 +161,11 @@ export class RssApiClient {
   }
 }
 
+function intHeader(headers: Headers, name: string, fallback: number): number {
+  const value = Number.parseInt(headers.get(name) || '', 10);
+  return Number.isFinite(value) ? value : fallback;
+}
+
 async function safeError(response: Response): Promise<string> {
   const text = await response.text().catch(() => '');
   if (!text) return `HTTP ${response.status}`;
@@ -122,4 +175,8 @@ async function safeError(response: Response): Promise<string> {
   } catch {
     return text.slice(0, 240);
   }
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }

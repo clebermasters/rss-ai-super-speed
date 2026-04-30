@@ -14,7 +14,7 @@ import tts_client  # noqa: E402
 
 class FakeSpeechResponse:
     status_code = 200
-    content = b"mp3-bytes"
+    content = b"ID3" + (b"0" * 2048)
     text = ""
     headers = {"content-type": "audio/mpeg"}
 
@@ -29,7 +29,7 @@ class TtsClientTest(unittest.TestCase):
                 settings={"ttsVoice": "marin"},
             )
 
-        self.assertEqual(result["audio"], b"mp3-bytes")
+        self.assertEqual(result["audio"], FakeSpeechResponse.content)
         self.assertEqual(result["model"], "gpt-4o-mini-tts-2025-12-15")
         call = post.call_args
         self.assertEqual(call.args[0], "https://api.openai.com/v1/audio/speech")

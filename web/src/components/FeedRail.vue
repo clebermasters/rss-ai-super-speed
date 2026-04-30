@@ -1,22 +1,26 @@
 <script setup lang="ts">
 import type { Feed } from '../types';
 
-defineProps<{ feeds: Feed[]; selectedFeedId: string; totalUnread: number }>();
-defineEmits<{ select: [feedId: string] }>();
+defineProps<{ brandNewCount: number; collapsed: boolean; feeds: Feed[]; selectedFeedId: string; totalUnread: number }>();
+defineEmits<{ select: [feedId: string]; toggle: [] }>();
 </script>
 
 <template>
-  <aside class="feed-rail float-in delay-1">
-    <button class="feed-card all" :class="{ active: selectedFeedId === '' }" @click="$emit('select', '')">
+  <aside class="feed-rail float-in delay-1" :class="{ collapsed }">
+    <div class="rail-tools">
+      <span v-if="!collapsed">Sources</span>
+      <button class="collapse-button" @click="$emit('toggle')">{{ collapsed ? '→' : '←' }}</button>
+    </div>
+    <button class="feed-card all" :class="{ active: selectedFeedId === '' }" :title="`All Articles · ${totalUnread} unread`" @click="$emit('select', '')">
       <span class="feed-glyph">✦</span>
-      <span>
+      <span class="feed-text">
         <strong>All Articles</strong>
-        <small>{{ totalUnread }} unread</small>
+        <small>{{ totalUnread }} unread<span v-if="brandNewCount > 0"> · {{ brandNewCount }} new</span></small>
       </span>
     </button>
-    <button v-for="feed in feeds" :key="feed.feedId" class="feed-card" :class="{ active: selectedFeedId === feed.feedId }" @click="$emit('select', feed.feedId)">
+    <button v-for="feed in feeds" :key="feed.feedId" class="feed-card" :class="{ active: selectedFeedId === feed.feedId }" :title="`${feed.name} · ${feed.unreadCount} unread`" @click="$emit('select', feed.feedId)">
       <span class="feed-glyph">{{ feed.name.slice(0, 2).toUpperCase() }}</span>
-      <span>
+      <span class="feed-text">
         <strong>{{ feed.name }}</strong>
         <small>{{ feed.unreadCount }} unread · {{ feed.articleCount }} total</small>
       </span>

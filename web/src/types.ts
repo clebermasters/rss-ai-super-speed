@@ -34,6 +34,11 @@ export interface Article {
   isRead: boolean;
   isSaved: boolean;
   contentAiFormatted: boolean;
+  contentAiFormattedAt?: number | null;
+  contentFetchedAt?: number | null;
+  fetchedAt?: number | null;
+  summaryGeneratedAt?: number | null;
+  updatedAt?: number | null;
 }
 
 export interface Settings {
@@ -71,6 +76,34 @@ export interface SpeechOptions {
   segmentPercent?: number;
   segmentIndex?: number;
   forceRefresh?: boolean;
+}
+
+export interface SpeechAudio {
+  blob: Blob;
+  contentType: string;
+  cacheKey?: string | null;
+  cacheStatus: string;
+  segmentIndex: number;
+  segmentCount: number;
+  segmentPercent: number;
+  inputChars: number;
+  sourceChars: number;
+  fromDeviceCache?: boolean;
+}
+
+export interface SpeechJobResponse {
+  jobId: string;
+  articleId: string;
+  target: SpeechTarget;
+  status: 'queued' | 'running' | 'completed' | 'failed' | string;
+  message?: string | null;
+  cacheKey?: string | null;
+  segmentIndex: number;
+  segmentCount: number;
+  segmentPercent: number;
+  inputChars: number;
+  sourceChars: number;
+  errors?: string[];
 }
 
 export interface BootstrapResponse {

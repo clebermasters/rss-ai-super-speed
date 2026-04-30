@@ -24,6 +24,8 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         return _handle_scheduled_refresh()
     if event.get("source") == "rss-ai.content-fetch-job":
         return _handle_content_fetch_job(event)
+    if event.get("source") == "rss-ai.tts-job":
+        return _handle_tts_job(event)
 
     method = event.get("requestContext", {}).get("http", {}).get("method", "GET").upper()
     path = event.get("rawPath", "/")
@@ -132,6 +134,10 @@ def route(method: str, path: str, event: dict[str, Any]) -> dict[str, Any]:
             return response(200, {"configured": False, "s3Key": key})
 
     segments = [segment for segment in path.strip("/").split("/") if segment]
+    if len(segments) == 3 and segments[0] == "v1" and segments[1] == "audio-jobs" and method == "GET":
+        status_code, body = handle_get_tts_job(storage, segments[2])
+        return response(status_code, body)
+
     if len(segments) == 3 and segments[0] == "v1" and segments[1] == "content-jobs" and method == "GET":
         return response(200, handle_get_content_job(storage, segments[2]))
 
@@ -505,10 +511,35 @@ def handle_article_tts(storage: RssStorage, article_id: str, payload: dict[str, 
             headers = _tts_headers(prepared, key, cache_status="hit")
             return 200, cached["audio"], str(cached.get("contentType") or "audio/mpeg"), headers
 
+    if _boolish(payload.get("async")):
+        job_options = dict(payload)
+        job_options.update({"target": target, "ttsCacheKey": key, "preparedInput": prepared})
+        job = storage.create_content_job(article_id, str(article.get("link") or ""), job_options, [])
+        _invoke_tts_job_async(job["jobId"])
+        return 202, _tts_job_body(job["jobId"], article_id, target, prepared, "queued", "Audio generation queued"), "application/json", headers
+
     speech = synthesize_speech(str(prepared["text"]), settings=settings, overrides=payload, prepared_input=prepared)
     content_type = str(speech.get("contentType") or "audio/mpeg")
-    storage.put_tts_audio(key, speech["audio"], content_type, metadata={**prepared, "target": target})
+    storage.put_tts_audio(key, speech["audio"], content_type, metadata=_tts_object_metadata(prepared, target))
     return 200, speech["audio"], content_type, headers
+
+
+def handle_get_tts_job(storage: RssStorage, job_id: str) -> tuple[int, dict[str, Any]]:
+    job = storage.get_content_job(job_id)
+    if not job:
+        return 404, {"error": "Audio job not found"}
+    options = job.get("options") or {}
+    prepared = options.get("preparedInput") if isinstance(options.get("preparedInput"), dict) else {}
+    return 200, _tts_job_body(
+        job_id,
+        str(job.get("articleId") or ""),
+        str(options.get("target") or "content"),
+        prepared,
+        str(job.get("status") or "unknown"),
+        str(job.get("message") or ""),
+        cache_key=str(job.get("ttsCacheKey") or options.get("ttsCacheKey") or ""),
+        errors=job.get("errors") or [],
+    )
 
 
 def _tts_headers(prepared: dict[str, Any], key: str, *, cache_status: str) -> dict[str, str]:
@@ -521,6 +552,117 @@ def _tts_headers(prepared: dict[str, Any], key: str, *, cache_status: str) -> di
         "x-rss-ai-input-chars": str(prepared.get("inputChars", 0)),
         "x-rss-ai-source-chars": str(prepared.get("sourceChars", 0)),
     }
+
+
+def _tts_object_metadata(prepared: dict[str, Any], target: str) -> dict[str, Any]:
+    return {
+        "target": target,
+        "textHash": prepared.get("textHash"),
+        "sourceHash": prepared.get("sourceHash"),
+        "segmentIndex": prepared.get("segmentIndex", 0),
+        "segmentCount": prepared.get("segmentCount", 1),
+        "segmentPercent": prepared.get("segmentPercent", 100),
+        "inputChars": prepared.get("inputChars", 0),
+        "sourceChars": prepared.get("sourceChars", 0),
+    }
+
+
+def _tts_job_body(
+    job_id: str,
+    article_id: str,
+    target: str,
+    prepared: dict[str, Any],
+    status: str,
+    message: str,
+    *,
+    cache_key: str = "",
+    errors: list[Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "jobId": job_id,
+        "articleId": article_id,
+        "target": target,
+        "status": status,
+        "message": message,
+        "cacheKey": cache_key,
+        "segmentIndex": int(prepared.get("segmentIndex") or 0),
+        "segmentCount": int(prepared.get("segmentCount") or 1),
+        "segmentPercent": int(prepared.get("segmentPercent") or 100),
+        "inputChars": int(prepared.get("inputChars") or 0),
+        "sourceChars": int(prepared.get("sourceChars") or 0),
+        "errors": errors or [],
+    }
+
+
+def _invoke_tts_job_async(job_id: str) -> None:
+    function_name = os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
+    if not function_name:
+        raise RuntimeError("AWS_LAMBDA_FUNCTION_NAME is required for async audio jobs")
+    boto3.client("lambda").invoke(
+        FunctionName=function_name,
+        InvocationType="Event",
+        Payload=json.dumps({"source": "rss-ai.tts-job", "jobId": job_id}).encode("utf-8"),
+    )
+
+
+def _handle_tts_job(event: dict[str, Any]) -> dict[str, Any]:
+    storage = RssStorage()
+    job_id = str(event.get("jobId") or "")
+    job = storage.get_content_job(job_id)
+    if not job:
+        return {"ok": False, "error": "job not found", "jobId": job_id}
+    options = job.get("options") or {}
+    article_id = str(job.get("articleId") or "")
+    target = str(options.get("target") or "content")
+    prepared = options.get("preparedInput") if isinstance(options.get("preparedInput"), dict) else {}
+    key = str(options.get("ttsCacheKey") or "")
+    storage.update_content_job(job_id, {"status": "running", "message": "Generating audio with OpenAI text-to-speech"})
+    try:
+        settings = storage.get_settings()
+        if not prepared or not key:
+            article = storage.get_article(article_id, include_content=True)
+            if not article:
+                raise RuntimeError("Article not found")
+            text = str(article.get("summary") or "").strip() if target == "summary" else _existing_article_content(article)
+            if not text:
+                raise RuntimeError("No readable text is available for audio")
+            prepared = prepare_tts_input(text, settings=settings, overrides=options)
+            key = tts_cache_key(article_id, target, prepared_input=prepared, settings=settings, overrides=options)
+        if not _boolish(options.get("forceRefresh")) and storage.get_tts_audio(key):
+            storage.update_content_job(
+                job_id,
+                {
+                    "status": "completed",
+                    "message": "Audio already available in cache",
+                    "ttsCacheKey": key,
+                    "completedAt": now_ms(),
+                },
+            )
+            return {"ok": True, "jobId": job_id, "cache": "hit"}
+        speech = synthesize_speech(str(prepared["text"]), settings=settings, overrides=options, prepared_input=prepared)
+        content_type = str(speech.get("contentType") or "audio/mpeg")
+        storage.put_tts_audio(key, speech["audio"], content_type, metadata=_tts_object_metadata(prepared, target))
+        storage.update_content_job(
+            job_id,
+            {
+                "status": "completed",
+                "message": "Audio generation completed",
+                "ttsCacheKey": key,
+                "completedAt": now_ms(),
+            },
+        )
+        return {"ok": True, "jobId": job_id, "cache": "miss"}
+    except Exception as exc:
+        storage.update_content_job(
+            job_id,
+            {
+                "status": "failed",
+                "message": str(exc),
+                "errors": (job.get("errors") or []) + [str(exc)],
+                "failedAt": now_ms(),
+            },
+        )
+        return {"ok": False, "jobId": job_id, "error": str(exc)}
 
 
 def handle_article_embedding(storage: RssStorage, article_id: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
@@ -640,6 +782,7 @@ def response(status: int, body: Any, content_type: str = "application/json", hea
         "access-control-allow-origin": "*",
         "access-control-allow-headers": "content-type,x-rss-ai-token",
         "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+        "access-control-expose-headers": "x-rss-ai-cache,x-rss-ai-cache-key,x-rss-ai-segment-index,x-rss-ai-segment-count,x-rss-ai-segment-percent,x-rss-ai-input-chars,x-rss-ai-source-chars,content-type,content-length",
     }
     response_headers.update(headers or {})
     return {
@@ -655,6 +798,7 @@ def binary_response(status: int, body: bytes, content_type: str, headers: dict[s
         "access-control-allow-origin": "*",
         "access-control-allow-headers": "content-type,x-rss-ai-token",
         "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+        "access-control-expose-headers": "x-rss-ai-cache,x-rss-ai-cache-key,x-rss-ai-segment-index,x-rss-ai-segment-count,x-rss-ai-segment-percent,x-rss-ai-input-chars,x-rss-ai-source-chars,content-type,content-length",
         "cache-control": "no-store",
     }
     response_headers.update(headers or {})

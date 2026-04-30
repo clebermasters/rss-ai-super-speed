@@ -4,6 +4,7 @@ build/
 app/build/
 web/dist/
 web/node_modules/
+web/public/config.local.json
 .gradle/
 *.exe
 *.dll

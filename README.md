@@ -100,6 +100,14 @@ The serverless backend can also power a static Vue web app hosted as an S3 websi
 aws/scripts/deploy_web_app.sh
 ```
 
+Run it locally with the same backend configuration:
+
+```bash
+scripts/run_web_app_local.sh
+```
+
+The local runner reads `.env` and `aws/generated/rss-api.env`, writes an ignored `web/public/config.local.json`, installs web dependencies if needed, and starts Vite on `http://localhost:5173`. Use `WEB_LOCAL_INCLUDE_TOKEN=0` if you want to start the UI without writing the API token into the local config file.
+
 Defaults:
 
 ```bash

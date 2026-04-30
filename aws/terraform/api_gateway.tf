@@ -6,6 +6,17 @@ resource "aws_apigatewayv2_api" "http" {
     allow_headers = ["content-type", "x-rss-ai-token"]
     allow_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
     allow_origins = ["*"]
+    expose_headers = [
+      "content-type",
+      "content-length",
+      "x-rss-ai-cache",
+      "x-rss-ai-cache-key",
+      "x-rss-ai-input-chars",
+      "x-rss-ai-segment-count",
+      "x-rss-ai-segment-index",
+      "x-rss-ai-segment-percent",
+      "x-rss-ai-source-chars",
+    ]
   }
 
   tags = local.common_tags

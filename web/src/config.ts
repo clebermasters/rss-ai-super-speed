@@ -32,18 +32,22 @@ export function readStoredConfig(): RuntimeConfig {
 }
 
 async function fetchRuntimeConfig(): Promise<RuntimeConfig> {
-  try {
-    const response = await fetch('/config.json', { cache: 'no-store' });
-    if (!response.ok) return emptyConfig();
-    const parsed = (await response.json()) as Partial<RuntimeConfig>;
-    return {
-      apiBaseUrl: parsed.apiBaseUrl || '',
-      apiToken: parsed.apiToken || '',
-      defaultTheme: parsed.defaultTheme || 'warm',
-    };
-  } catch {
-    return emptyConfig();
+  const configPaths = import.meta.env.DEV ? ['/config.local.json', '/config.json'] : ['/config.json'];
+  for (const path of configPaths) {
+    try {
+      const response = await fetch(path, { cache: 'no-store' });
+      if (!response.ok) continue;
+      const parsed = (await response.json()) as Partial<RuntimeConfig>;
+      return {
+        apiBaseUrl: parsed.apiBaseUrl || '',
+        apiToken: parsed.apiToken || '',
+        defaultTheme: parsed.defaultTheme || 'warm',
+      };
+    } catch {
+      continue;
+    }
   }
+  return emptyConfig();
 }
 
 function emptyConfig(): RuntimeConfig {

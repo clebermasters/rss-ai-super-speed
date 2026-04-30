@@ -1,11 +1,14 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { RssApiClient, RssApiError } from '../api';
 import { loadRuntimeConfig, saveRuntimeConfig } from '../config';
-import type { Article, ArticleFilter, Feed, RuntimeConfig, Settings, SpeechTarget } from '../types';
+import { detectBrandNewArticleIds } from '../freshness';
+import { loadCachedSpeech, saveCachedSpeech, speechCacheKey } from '../speechCache';
+import type { Article, ArticleFilter, Feed, RuntimeConfig, Settings, SpeechAudio, SpeechTarget } from '../types';
 
 type Notice = { kind: 'info' | 'success' | 'error'; message: string };
 
 const INITIAL_CONFIG: RuntimeConfig = { apiBaseUrl: '', apiToken: '', defaultTheme: 'warm' };
+const DEFAULT_SEGMENT_PERCENT = 30;
 
 export function defaultSettings(): Settings {
   return {
@@ -29,6 +32,7 @@ export function useRssReader() {
   const settings = ref<Settings | null>(null);
   const feeds = ref<Feed[]>([]);
   const articles = ref<Article[]>([]);
+  const brandNewArticleIds = ref<Set<string>>(new Set());
   const selectedFeedId = ref('');
   const selectedArticle = ref<Article | null>(null);
   const query = ref('');
@@ -40,10 +44,18 @@ export function useRssReader() {
   const showSettings = ref(false);
   const audioUrl = ref('');
   const audioLabel = ref('');
+  const speechSegmentPercent = ref(DEFAULT_SEGMENT_PERCENT);
+  const speechSegmentIndex = ref(0);
+  const speechSegmentCount = ref(1);
+  const speechCacheStatus = ref('');
+  const speechInputChars = ref(0);
+  const speechSourceChars = ref(0);
+  const speechTarget = ref<SpeechTarget | null>(null);
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
 
   const configured = computed(() => Boolean(config.value.apiBaseUrl && config.value.apiToken));
   const totalUnread = computed(() => feeds.value.reduce((sum, feed) => sum + Number(feed.unreadCount || 0), 0));
+  const brandNewCount = computed(() => brandNewArticleIds.value.size);
   const selectedFeed = computed(() => feeds.value.find((feed) => feed.feedId === selectedFeedId.value) || null);
   const activeSettings = computed(() => settings.value || defaultSettings());
 
@@ -88,6 +100,7 @@ export function useRssReader() {
         limit: 200,
       });
       articles.value = data.articles || [];
+      brandNewArticleIds.value = detectBrandNewArticleIds(articles.value);
       const currentId = selectedArticle.value?.articleId;
       const next = options.preserveSelection
         ? articles.value.find((article) => article.articleId === currentId) || articles.value[0] || null
@@ -111,6 +124,7 @@ export function useRssReader() {
       const full = await client().article(article.articleId);
       replaceArticle(full);
       selectedArticle.value = full;
+      loadSpeechPrefs(full.articleId);
       if (!full.isRead) {
         const read = await client().markRead(full.articleId);
         replaceArticle(read);
@@ -185,21 +199,76 @@ export function useRssReader() {
     }
   }
 
-  async function playSpeech(target: SpeechTarget): Promise<void> {
+  async function playSpeech(target: SpeechTarget, options: { forceRefresh?: boolean } = {}): Promise<void> {
     const article = selectedArticle.value;
     if (!article) return;
     busyAction.value = target === 'summary' ? 'Creating summary audio' : 'Creating article audio';
     try {
-      if (audioUrl.value) URL.revokeObjectURL(audioUrl.value);
-      const blob = await client().speech(article.articleId, { target, segmentPercent: target === 'content' ? 30 : 100 });
-      audioUrl.value = URL.createObjectURL(blob);
-      audioLabel.value = target === 'summary' ? 'AI summary audio' : 'Article audio';
-      notice.value = { kind: 'success', message: 'Audio is ready.' };
+      const request = {
+        target,
+        segmentPercent: target === 'content' ? speechSegmentPercent.value : 100,
+        segmentIndex: target === 'content' ? speechSegmentIndex.value : 0,
+        forceRefresh: Boolean(options.forceRefresh),
+      };
+      const key = speechCacheKey(article, request, activeSettings.value);
+      let audio: SpeechAudio | null = null;
+      if (!request.forceRefresh) {
+        audio = await loadCachedSpeech(key);
+      }
+      if (!audio) {
+        audio = await client().speech(article.articleId, request);
+        await saveCachedSpeech(key, audio);
+      }
+      setAudio(article, target, audio);
     } catch (error) {
       handleError(error, 'Unable to create audio.');
     } finally {
       busyAction.value = '';
     }
+  }
+
+  function setAudio(article: Article, target: SpeechTarget, audio: SpeechAudio): void {
+    if (audioUrl.value) URL.revokeObjectURL(audioUrl.value);
+    audioUrl.value = URL.createObjectURL(audio.blob);
+    audioLabel.value = target === 'summary' ? 'AI summary audio' : `Article audio part ${audio.segmentIndex + 1} of ${Math.max(audio.segmentCount, 1)}`;
+    speechTarget.value = target;
+    speechCacheStatus.value = audio.cacheStatus || (audio.fromDeviceCache ? 'device' : 'miss');
+    speechInputChars.value = audio.inputChars;
+    speechSourceChars.value = audio.sourceChars;
+    if (target === 'content') {
+      speechSegmentIndex.value = audio.segmentIndex;
+      speechSegmentCount.value = Math.max(audio.segmentCount, 1);
+      speechSegmentPercent.value = audio.segmentPercent || speechSegmentPercent.value;
+      saveSpeechPrefs(article.articleId);
+    }
+    const cacheLabel = speechCacheStatus.value ? ` · ${speechCacheStatus.value} cache` : '';
+    notice.value = { kind: 'success', message: `Audio ready${cacheLabel}. Use the player controls to play or pause.` };
+  }
+
+  function stopSpeech(): void {
+    if (audioUrl.value) URL.revokeObjectURL(audioUrl.value);
+    audioUrl.value = '';
+    audioLabel.value = '';
+    speechTarget.value = null;
+  }
+
+  function setSpeechSegmentPercent(percent: number): void {
+    speechSegmentPercent.value = percent;
+    speechSegmentIndex.value = loadStoredInt(`segment:${selectedArticle.value?.articleId}:${percent}`, 0);
+    speechSegmentCount.value = loadStoredInt(`count:${selectedArticle.value?.articleId}:${percent}`, 1);
+    if (selectedArticle.value) saveSpeechPrefs(selectedArticle.value.articleId);
+  }
+
+  function setSpeechSegmentIndex(index: number): void {
+    speechSegmentIndex.value = Math.min(Math.max(index, 0), Math.max(speechSegmentCount.value - 1, 0));
+    if (selectedArticle.value) saveSpeechPrefs(selectedArticle.value.articleId);
+  }
+
+  function handleSpeechEnded(): void {
+    if (speechTarget.value !== 'content' || !selectedArticle.value) return;
+    const nextSegment = Math.min(speechSegmentIndex.value + 1, Math.max(speechSegmentCount.value - 1, 0));
+    speechSegmentIndex.value = nextSegment;
+    saveSpeechPrefs(selectedArticle.value.articleId);
   }
 
   async function saveConfig(nextConfig: RuntimeConfig, nextSettings: Settings): Promise<void> {
@@ -287,6 +356,18 @@ export function useRssReader() {
     notice.value = { kind: 'error', message: message || fallback };
   }
 
+  function loadSpeechPrefs(articleId: string): void {
+    speechSegmentPercent.value = loadStoredInt(`percent:${articleId}`, DEFAULT_SEGMENT_PERCENT);
+    speechSegmentIndex.value = loadStoredInt(`segment:${articleId}:${speechSegmentPercent.value}`, 0);
+    speechSegmentCount.value = loadStoredInt(`count:${articleId}:${speechSegmentPercent.value}`, 1);
+  }
+
+  function saveSpeechPrefs(articleId: string): void {
+    localStorage.setItem(`rss-ai-web-speech:percent:${articleId}`, String(speechSegmentPercent.value));
+    localStorage.setItem(`rss-ai-web-speech:segment:${articleId}:${speechSegmentPercent.value}`, String(speechSegmentIndex.value));
+    localStorage.setItem(`rss-ai-web-speech:count:${articleId}:${speechSegmentPercent.value}`, String(speechSegmentCount.value));
+  }
+
   function scheduleLoadArticles(): void {
     if (searchTimer) clearTimeout(searchTimer);
     searchTimer = setTimeout(() => void loadArticles({ preserveSelection: false }), 280);
@@ -302,6 +383,8 @@ export function useRssReader() {
     audioLabel,
     audioUrl,
     bootstrap,
+    brandNewArticleIds,
+    brandNewCount,
     busyAction,
     config,
     configured,
@@ -322,9 +405,20 @@ export function useRssReader() {
     selectedFeed,
     selectedFeedId,
     setFeed,
+    setSpeechSegmentIndex,
+    setSpeechSegmentPercent,
     settings,
     showSettings,
+    speechCacheStatus,
+    speechInputChars,
+    speechSegmentCount,
+    speechSegmentIndex,
+    speechSegmentPercent,
+    speechSourceChars,
+    speechTarget,
+    stopSpeech,
     summarize,
+    handleSpeechEnded,
     toggleSaved,
     totalUnread,
   };
@@ -332,4 +426,9 @@ export function useRssReader() {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function loadStoredInt(key: string, fallback: number): number {
+  const value = Number.parseInt(localStorage.getItem(`rss-ai-web-speech:${key}`) || '', 10);
+  return Number.isFinite(value) ? value : fallback;
 }

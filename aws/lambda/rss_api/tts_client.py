@@ -81,10 +81,12 @@ def synthesize_speech(
     )
     if response.status_code >= 400:
         raise TtsError(f"OpenAI text-to-speech failed: {response.status_code} {response.text}")
+    content_type = response.headers.get("content-type") or _content_type_for_format(response_format)
+    _validate_audio_response(response.content, content_type, response_format)
 
     return {
         "audio": response.content,
-        "contentType": response.headers.get("content-type") or _content_type_for_format(response_format),
+        "contentType": content_type,
         "model": model,
         "voice": voice,
         "responseFormat": response_format,
@@ -207,6 +209,29 @@ def _content_type_for_format(response_format: str) -> str:
         "flac": "audio/flac",
         "pcm": "audio/pcm",
     }.get(response_format, "audio/mpeg")
+
+
+def _validate_audio_response(audio: bytes, content_type: str, response_format: str) -> None:
+    normalized_content_type = content_type.split(";", 1)[0].strip().lower()
+    if not normalized_content_type.startswith("audio/") and normalized_content_type not in {"application/octet-stream"}:
+        preview = audio[:160].decode("utf-8", errors="replace")
+        raise TtsError(f"OpenAI text-to-speech returned non-audio content-type {content_type}: {preview}")
+    if len(audio) < 1024:
+        preview = audio[:160].decode("utf-8", errors="replace")
+        raise TtsError(f"OpenAI text-to-speech returned an unexpectedly small audio payload ({len(audio)} bytes): {preview}")
+    lowered_format = response_format.lower()
+    if lowered_format == "mp3" and not (audio.startswith(b"ID3") or (len(audio) > 1 and audio[0] == 0xFF and (audio[1] & 0xE0) == 0xE0)):
+        preview = audio[:24].hex()
+        raise TtsError(f"OpenAI text-to-speech returned invalid mp3 bytes: {preview}")
+    if lowered_format == "wav" and not audio.startswith(b"RIFF"):
+        preview = audio[:24].hex()
+        raise TtsError(f"OpenAI text-to-speech returned invalid wav bytes: {preview}")
+    if lowered_format == "flac" and not audio.startswith(b"fLaC"):
+        preview = audio[:24].hex()
+        raise TtsError(f"OpenAI text-to-speech returned invalid flac bytes: {preview}")
+    if lowered_format == "opus" and not audio.startswith(b"OggS"):
+        preview = audio[:24].hex()
+        raise TtsError(f"OpenAI text-to-speech returned invalid opus bytes: {preview}")
 
 
 def jsonish(value: dict[str, Any]) -> str:

@@ -26,3 +26,15 @@ output "browser_ecr_repository_url" {
 output "codex_auth_s3_key" {
   value = var.codex_auth_s3_key
 }
+
+output "web_bucket_name" {
+  value = aws_s3_bucket.web_static.bucket
+}
+
+output "web_website_endpoint" {
+  value = aws_s3_bucket_website_configuration.web_static.website_endpoint
+}
+
+output "web_website_domain" {
+  value = aws_s3_bucket_website_configuration.web_static.website_domain
+}

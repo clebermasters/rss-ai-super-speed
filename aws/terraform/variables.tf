@@ -151,3 +151,14 @@ variable "s3_cache_noncurrent_expiration_days" {
     error_message = "s3_cache_noncurrent_expiration_days must be between 1 and 30."
   }
 }
+
+variable "web_domain_name" {
+  description = "DNS name and S3 website bucket name for the static Vue web app."
+  type        = string
+  default     = "rss.bitslovers.com"
+
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9.-]+[a-z0-9]$", var.web_domain_name))
+    error_message = "web_domain_name must be a valid lowercase DNS name such as rss.bitslovers.com."
+  }
+}

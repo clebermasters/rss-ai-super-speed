@@ -1,0 +1,94 @@
+export interface RuntimeConfig {
+  apiBaseUrl: string;
+  apiToken: string;
+  defaultTheme?: string;
+}
+
+export type ArticleFilter = 'all' | 'unread' | 'saved';
+
+export type SpeechTarget = 'content' | 'summary';
+
+export interface Feed {
+  feedId: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+  tags: string[];
+  limit: number;
+  articleCount: number;
+  unreadCount: number;
+}
+
+export interface Article {
+  articleId: string;
+  title: string;
+  link: string;
+  summary?: string | null;
+  content?: string | null;
+  contentPreview?: string | null;
+  publishedAt?: string | null;
+  source: string;
+  sourceFeedId?: string | null;
+  score?: number | null;
+  comments?: number | null;
+  isRead: boolean;
+  isSaved: boolean;
+  contentAiFormatted: boolean;
+}
+
+export interface Settings {
+  llmProvider: string;
+  aiModel: string;
+  aiApiBase: string;
+  codexModel: string;
+  codexReasoningEffort: string;
+  embeddingModel: string;
+  ttsModel: string;
+  ttsVoice: string;
+  ttsInstructions: string;
+  aiContentFormattingEnabled: boolean;
+  browserBypassEnabled: boolean;
+  browserBypassMode: string;
+}
+
+export interface FetchContentResponse {
+  articleId: string;
+  jobId?: string | null;
+  status: string;
+  strategy?: string | null;
+  content?: string;
+  article?: Article | null;
+  formattingRequested: boolean;
+  contentFormattingAttempted: boolean;
+  contentAiFormatted: boolean;
+  contentFormattingError?: string | null;
+  errors: string[];
+  message?: string | null;
+}
+
+export interface SpeechOptions {
+  target: SpeechTarget;
+  segmentPercent?: number;
+  segmentIndex?: number;
+  forceRefresh?: boolean;
+}
+
+export interface BootstrapResponse {
+  feeds: Feed[];
+  settings: Settings;
+}
+
+export interface ArticlesResponse {
+  articles: Article[];
+  cursor: number;
+}
+
+export interface FeedsResponse {
+  feeds: Feed[];
+}
+
+export interface RefreshResponse {
+  fetched: number;
+  saved: number;
+  errors?: Array<{ name?: string; url?: string; error?: string }>;
+}

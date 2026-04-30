@@ -2,6 +2,8 @@
 target/
 build/
 app/build/
+web/dist/
+web/node_modules/
 .gradle/
 *.exe
 *.dll

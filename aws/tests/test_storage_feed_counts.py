@@ -18,6 +18,25 @@ class FakeTable:
         return {"Items": self.items}
 
 
+class PaginatedFakeTable:
+    def __init__(self, pages: list[dict]) -> None:
+        self.pages = pages
+        self.calls = 0
+
+    def query(self, **kwargs: object) -> dict:
+        expected_start_key = kwargs.get("ExclusiveStartKey")
+        if self.calls == 0:
+            self.assert_no_start_key(expected_start_key)
+        page = self.pages[self.calls]
+        self.calls += 1
+        return page
+
+    @staticmethod
+    def assert_no_start_key(value: object) -> None:
+        if value is not None:
+            raise AssertionError(f"first query should not use ExclusiveStartKey: {value!r}")
+
+
 class StorageFeedCountsTest(unittest.TestCase):
     def test_feed_article_counts_group_by_source_feed_id(self) -> None:
         storage = RssStorage.__new__(RssStorage)
@@ -69,6 +88,45 @@ class StorageFeedCountsTest(unittest.TestCase):
             [(feed["feedId"], feed["articleCount"], feed["unreadCount"]) for feed in feeds],
             [("feed-a", 7, 3), ("feed-b", 2, 0)],
         )
+
+    def test_list_articles_follows_dynamodb_pagination(self) -> None:
+        storage = RssStorage.__new__(RssStorage)
+        storage.table = PaginatedFakeTable(
+            [
+                {
+                    "Items": [
+                        {
+                            "pk": "USER#default",
+                            "sk": "ARTICLE#a1",
+                            "gsi1pk": "USER#default#ARTICLES",
+                            "gsi1sk": "2#a1",
+                            "articleId": "a1",
+                            "sourceFeedId": "feed-a",
+                        }
+                    ],
+                    "ScannedCount": 1,
+                    "LastEvaluatedKey": {"pk": "cursor", "sk": "cursor"},
+                },
+                {
+                    "Items": [
+                        {
+                            "pk": "USER#default",
+                            "sk": "ARTICLE#b1",
+                            "gsi1pk": "USER#default#ARTICLES",
+                            "gsi1sk": "1#b1",
+                            "articleId": "b1",
+                            "sourceFeedId": "feed-b",
+                        }
+                    ],
+                    "ScannedCount": 1,
+                },
+            ]
+        )
+
+        articles = storage.list_articles({"limit": 10})
+
+        self.assertEqual([article["articleId"] for article in articles], ["a1", "b1"])
+        self.assertEqual(storage.table.calls, 2)
 
 
 if __name__ == "__main__":

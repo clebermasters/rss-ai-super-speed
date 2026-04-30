@@ -16,6 +16,7 @@ from content_fetcher import fetch_direct, fetch_with_fallbacks
 from formatters import format_articles
 from rss_fetcher import fetch_feeds
 from storage import RssStorage, now_ms
+from tts_client import prepare_tts_input, synthesize_speech, tts_cache_key
 
 
 def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
@@ -37,9 +38,9 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
     except ValueError as exc:
         return response(400, {"error": str(exc)})
     except RuntimeError as exc:
-        return response(502, {"error": str(exc)})
+        return response(502, {"error": _client_safe_error(exc, "Backend provider error")})
     except Exception as exc:
-        return response(500, {"error": f"Unhandled server error: {exc}"})
+        return response(500, {"error": _client_safe_error(exc, "Unhandled server error")})
 
 
 def route(method: str, path: str, event: dict[str, Any]) -> dict[str, Any]:
@@ -185,6 +186,11 @@ def route(method: str, path: str, event: dict[str, Any]) -> dict[str, Any]:
                 return response(status_code, body)
             if action == "summarize":
                 return response(200, handle_summarize_article(storage, article_id, parse_json_body(event, default={})))
+            if action == "tts":
+                status_code, body, content_type, headers = handle_article_tts(storage, article_id, parse_json_body(event, default={}))
+                if isinstance(body, bytes):
+                    return binary_response(status_code, body, content_type, headers=headers)
+                return response(status_code, body, headers=headers)
             if action == "embedding":
                 status_code, body = handle_article_embedding(storage, article_id, parse_json_body(event, default={}))
                 return response(status_code, body)
@@ -470,6 +476,53 @@ def handle_summarize_article(storage: RssStorage, article_id: str, payload: dict
     return {"articleId": article_id, "summary": summary}
 
 
+def handle_article_tts(storage: RssStorage, article_id: str, payload: dict[str, Any]) -> tuple[int, bytes | dict[str, Any], str, dict[str, str]]:
+    article = storage.get_article(article_id, include_content=True)
+    if not article:
+        return 404, {"error": "Article not found"}, "application/json", {}
+    target = str(payload.get("target") or "content").lower()
+    if target == "summary":
+        text = str(article.get("summary") or "").strip()
+        if not text:
+            return 400, {"error": "No AI summary is available to read. Generate a summary first."}, "application/json", {}
+    elif target == "content":
+        text = _existing_article_content(article)
+        if not text:
+            return 400, {"error": "No article content is available to read. Fetch full content first."}, "application/json", {}
+    else:
+        return 400, {"error": "TTS target must be content or summary"}, "application/json", {}
+
+    settings = storage.get_settings()
+    prepared = prepare_tts_input(text, settings=settings, overrides=payload)
+    if not prepared.get("text"):
+        return 400, {"error": "No readable text remains after cleaning article noise."}, "application/json", {}
+    key = tts_cache_key(article_id, target, prepared_input=prepared, settings=settings, overrides=payload)
+    use_cache = not _boolish(payload.get("forceRefresh"))
+    headers = _tts_headers(prepared, key, cache_status="miss")
+    if use_cache:
+        cached = storage.get_tts_audio(key)
+        if cached:
+            headers = _tts_headers(prepared, key, cache_status="hit")
+            return 200, cached["audio"], str(cached.get("contentType") or "audio/mpeg"), headers
+
+    speech = synthesize_speech(str(prepared["text"]), settings=settings, overrides=payload, prepared_input=prepared)
+    content_type = str(speech.get("contentType") or "audio/mpeg")
+    storage.put_tts_audio(key, speech["audio"], content_type, metadata={**prepared, "target": target})
+    return 200, speech["audio"], content_type, headers
+
+
+def _tts_headers(prepared: dict[str, Any], key: str, *, cache_status: str) -> dict[str, str]:
+    return {
+        "x-rss-ai-cache": cache_status,
+        "x-rss-ai-cache-key": key,
+        "x-rss-ai-segment-index": str(prepared.get("segmentIndex", 0)),
+        "x-rss-ai-segment-count": str(prepared.get("segmentCount", 1)),
+        "x-rss-ai-segment-percent": str(prepared.get("segmentPercent", 100)),
+        "x-rss-ai-input-chars": str(prepared.get("inputChars", 0)),
+        "x-rss-ai-source-chars": str(prepared.get("sourceChars", 0)),
+    }
+
+
 def handle_article_embedding(storage: RssStorage, article_id: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     article = storage.get_article(article_id, include_content=True)
     if not article:
@@ -579,18 +632,37 @@ def parse_json_body(event: dict[str, Any], default: Any | None = None) -> Any:
     return json.loads(body)
 
 
-def response(status: int, body: Any, content_type: str = "application/json") -> dict[str, Any]:
+def response(status: int, body: Any, content_type: str = "application/json", headers: dict[str, str] | None = None) -> dict[str, Any]:
     if content_type == "application/json" and not isinstance(body, str):
         body = json.dumps(body, default=str)
+    response_headers = {
+        "content-type": content_type,
+        "access-control-allow-origin": "*",
+        "access-control-allow-headers": "content-type,x-rss-ai-token",
+        "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+    }
+    response_headers.update(headers or {})
     return {
         "statusCode": status,
-        "headers": {
-            "content-type": content_type,
-            "access-control-allow-origin": "*",
-            "access-control-allow-headers": "content-type,x-rss-ai-token",
-            "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-        },
+        "headers": response_headers,
         "body": body,
+    }
+
+
+def binary_response(status: int, body: bytes, content_type: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
+    response_headers = {
+        "content-type": content_type,
+        "access-control-allow-origin": "*",
+        "access-control-allow-headers": "content-type,x-rss-ai-token",
+        "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+        "cache-control": "no-store",
+    }
+    response_headers.update(headers or {})
+    return {
+        "statusCode": status,
+        "headers": response_headers,
+        "isBase64Encoded": True,
+        "body": base64.b64encode(body).decode("ascii"),
     }
 
 
@@ -600,6 +672,16 @@ def _authorized(event: dict[str, Any]) -> bool:
         return True
     headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
     return headers.get("x-rss-ai-token") == token
+
+
+def _client_safe_error(exc: Exception, fallback: str) -> str:
+    message = str(exc)
+    lowered = message.lower()
+    if "accessdenied" in lowered and "s3" in lowered:
+        return "Backend storage permission denied"
+    if "arn:aws:" in lowered or "amazonaws.com" in lowered:
+        return fallback
+    return message or fallback
 
 
 def _query_one(query: dict[str, list[str]], key: str, default: str | None = None) -> str | None:

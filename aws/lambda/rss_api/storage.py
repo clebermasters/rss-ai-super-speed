@@ -56,6 +56,13 @@ class RssStorage:
             "codexReasoningEffort": "medium",
             "codexClientVersion": os.environ.get("OPENAI_CODEX_CLIENT_VERSION", "0.118.0"),
             "embeddingModel": os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small"),
+            "ttsModel": os.environ.get("OPENAI_TTS_MODEL", "gpt-4o-mini-tts-2025-12-15"),
+            "ttsVoice": os.environ.get("OPENAI_TTS_VOICE", "marin"),
+            "ttsInstructions": os.environ.get(
+                "OPENAI_TTS_INSTRUCTIONS",
+                "Read this as a calm, clear personal news reader. Use natural pacing, short pauses between paragraphs, and a warm but neutral tone.",
+            ),
+            "ttsMaxInputChars": 6000,
             "autoSummarize": False,
             "autoFetchContent": False,
             "aiContentFormattingEnabled": False,
@@ -233,14 +240,30 @@ class RssStorage:
         filters = filters or {}
         limit = int(filters.get("limit") or 50)
         max_scan = max(limit * 5, 200)
-        response = self.table.query(
-            IndexName="gsi1",
-            KeyConditionExpression=Key("gsi1pk").eq(ARTICLES_GSI_PK),
-            ScanIndexForward=False,
-            Limit=max_scan,
-        )
-        articles = [self._strip_keys(item) for item in response.get("Items", [])]
-        filtered = [article for article in articles if self._article_matches(article, filters)]
+        filtered: list[dict[str, Any]] = []
+        scanned = 0
+        last_key = None
+        while len(filtered) < limit and scanned < max_scan:
+            query_args: dict[str, Any] = {
+                "IndexName": "gsi1",
+                "KeyConditionExpression": Key("gsi1pk").eq(ARTICLES_GSI_PK),
+                "ScanIndexForward": False,
+                "Limit": max_scan - scanned,
+            }
+            if last_key:
+                query_args["ExclusiveStartKey"] = last_key
+            response = self.table.query(**query_args)
+            items = response.get("Items", [])
+            scanned += int(response.get("ScannedCount") or len(items))
+            for item in items:
+                article = self._strip_keys(item)
+                if self._article_matches(article, filters):
+                    filtered.append(article)
+                    if len(filtered) >= limit:
+                        break
+            last_key = response.get("LastEvaluatedKey")
+            if not last_key:
+                break
         return filtered[:limit]
 
     def get_article(self, article_id: str, include_content: bool = False) -> dict[str, Any] | None:
@@ -354,6 +377,33 @@ class RssStorage:
 
     def delete_codex_auth(self, key: str) -> None:
         self.s3.delete_object(Bucket=self.bucket_name, Key=key)
+
+    def get_tts_audio(self, key: str) -> dict[str, Any] | None:
+        try:
+            response = self.s3.get_object(Bucket=self.bucket_name, Key=key)
+            return {
+                "audio": response["Body"].read(),
+                "contentType": response.get("ContentType") or "audio/mpeg",
+                "metadata": response.get("Metadata") or {},
+            }
+        except ClientError as exc:
+            error = exc.response.get("Error", {})
+            message = str(error.get("Message") or "")
+            if error.get("Code") in {"NoSuchKey", "404"}:
+                return None
+            if error.get("Code") == "AccessDenied" and "ListBucket" in message:
+                return None
+            raise
+
+    def put_tts_audio(self, key: str, audio: bytes, content_type: str, metadata: dict[str, Any] | None = None) -> None:
+        self.s3.put_object(
+            Bucket=self.bucket_name,
+            Key=key,
+            Body=audio,
+            ContentType=content_type,
+            Metadata={str(k): str(v) for k, v in (metadata or {}).items() if v is not None},
+            ServerSideEncryption="AES256",
+        )
 
     def create_content_job(
         self,

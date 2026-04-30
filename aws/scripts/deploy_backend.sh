@@ -52,6 +52,12 @@ Environment:
   OPENAI_CODEX_MODEL     Default Codex subscription model.
   OPENAI_CODEX_CLIENT_VERSION
                          Codex client version override.
+  S3_TTS_CACHE_EXPIRATION_DAYS
+                         Days to keep generated TTS audio cache objects. Default: 30.
+  S3_BROWSER_RESULTS_EXPIRATION_DAYS
+                         Days to keep oversized browser-fetch result objects. Default: 7.
+  S3_CACHE_NONCURRENT_EXPIRATION_DAYS
+                         Days to keep old cache object versions. Default: 1.
 EOF
 }
 
@@ -350,7 +356,7 @@ post_deploy_terraform_plan() {
   info "Checking Terraform no-drift plan"
   load_generated_env
 
-  local openai_key minimax_key openai_base ai_model embedding_model codex_model codex_client_version
+  local openai_key minimax_key openai_base ai_model embedding_model codex_model codex_client_version tts_cache_days browser_result_days noncurrent_days
   openai_key="${OPENAI_API_KEY:-$(existing_env_value OPENAI_API_KEY "$APP_ENV_FILE")}"
   minimax_key="${MINIMAX_API_KEY:-$(existing_env_value MINIMAX_API_KEY "$APP_ENV_FILE")}"
   openai_base="${OPENAI_API_BASE:-$(existing_env_value OPENAI_API_BASE "$APP_ENV_FILE")}"
@@ -363,6 +369,12 @@ post_deploy_terraform_plan() {
   codex_model="${codex_model:-gpt-5.4}"
   codex_client_version="${OPENAI_CODEX_CLIENT_VERSION:-$(existing_env_value OPENAI_CODEX_CLIENT_VERSION "$APP_ENV_FILE")}"
   codex_client_version="${codex_client_version:-0.118.0}"
+  tts_cache_days="${S3_TTS_CACHE_EXPIRATION_DAYS:-$(existing_env_value S3_TTS_CACHE_EXPIRATION_DAYS "$APP_ENV_FILE")}"
+  tts_cache_days="${tts_cache_days:-30}"
+  browser_result_days="${S3_BROWSER_RESULTS_EXPIRATION_DAYS:-$(existing_env_value S3_BROWSER_RESULTS_EXPIRATION_DAYS "$APP_ENV_FILE")}"
+  browser_result_days="${browser_result_days:-7}"
+  noncurrent_days="${S3_CACHE_NONCURRENT_EXPIRATION_DAYS:-$(existing_env_value S3_CACHE_NONCURRENT_EXPIRATION_DAYS "$APP_ENV_FILE")}"
+  noncurrent_days="${noncurrent_days:-1}"
 
   terraform -chdir="$TF_DIR" plan -input=false \
     -var "app_name=$APP_NAME" \
@@ -376,7 +388,10 @@ post_deploy_terraform_plan() {
     -var "ai_model=$ai_model" \
     -var "embedding_model=$embedding_model" \
     -var "codex_model=$codex_model" \
-    -var "codex_client_version=$codex_client_version"
+    -var "codex_client_version=$codex_client_version" \
+    -var "s3_tts_cache_expiration_days=$tts_cache_days" \
+    -var "s3_browser_results_expiration_days=$browser_result_days" \
+    -var "s3_cache_noncurrent_expiration_days=$noncurrent_days"
 }
 
 preflight

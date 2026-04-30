@@ -65,6 +65,24 @@ variable "embedding_model" {
   default     = "text-embedding-3-small"
 }
 
+variable "openai_tts_api_base" {
+  description = "OpenAI API base URL for text-to-speech calls."
+  type        = string
+  default     = "https://api.openai.com/v1"
+}
+
+variable "openai_tts_model" {
+  description = "Default OpenAI text-to-speech model."
+  type        = string
+  default     = "gpt-4o-mini-tts-2025-12-15"
+}
+
+variable "openai_tts_voice" {
+  description = "Default OpenAI text-to-speech voice."
+  type        = string
+  default     = "marin"
+}
+
 variable "codex_model" {
   description = "Default Codex subscription model."
   type        = string
@@ -99,4 +117,37 @@ variable "log_retention_days" {
   description = "CloudWatch log retention for Lambda logs."
   type        = number
   default     = 14
+}
+
+variable "s3_tts_cache_expiration_days" {
+  description = "Days to keep generated TTS audio cache objects in the private S3 bucket."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = var.s3_tts_cache_expiration_days >= 1 && var.s3_tts_cache_expiration_days <= 365
+    error_message = "s3_tts_cache_expiration_days must be between 1 and 365."
+  }
+}
+
+variable "s3_browser_results_expiration_days" {
+  description = "Days to keep oversized browser-fetch result objects in the private S3 bucket."
+  type        = number
+  default     = 7
+
+  validation {
+    condition     = var.s3_browser_results_expiration_days >= 1 && var.s3_browser_results_expiration_days <= 90
+    error_message = "s3_browser_results_expiration_days must be between 1 and 90."
+  }
+}
+
+variable "s3_cache_noncurrent_expiration_days" {
+  description = "Days to keep noncurrent versions for cache prefixes when S3 versioning is enabled."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.s3_cache_noncurrent_expiration_days >= 1 && var.s3_cache_noncurrent_expiration_days <= 30
+    error_message = "s3_cache_noncurrent_expiration_days must be between 1 and 30."
+  }
 }

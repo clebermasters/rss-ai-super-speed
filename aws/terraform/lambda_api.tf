@@ -27,6 +27,9 @@ resource "aws_lambda_function" "api" {
       OPENAI_API_BASE             = var.openai_api_base
       AI_MODEL                    = var.ai_model
       EMBEDDING_MODEL             = var.embedding_model
+      OPENAI_TTS_API_BASE         = var.openai_tts_api_base
+      OPENAI_TTS_MODEL            = var.openai_tts_model
+      OPENAI_TTS_VOICE            = var.openai_tts_voice
       OPENAI_CODEX_MODEL          = var.codex_model
       OPENAI_CODEX_CLIENT_VERSION = var.codex_client_version
       BROWSER_BYPASS_ENABLED      = "true"

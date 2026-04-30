@@ -81,6 +81,22 @@ resource "aws_iam_policy" "api_access" {
       {
         Effect = "Allow"
         Action = [
+          "s3:ListBucket"
+        ]
+        Resource = aws_s3_bucket.private.arn
+        Condition = {
+          StringLike = {
+            "s3:prefix" = [
+              "browser-results/*",
+              "codex/*",
+              "tts-cache/*"
+            ]
+          }
+        }
+      },
+      {
+        Effect = "Allow"
+        Action = [
           "lambda:InvokeFunction"
         ]
         Resource = [

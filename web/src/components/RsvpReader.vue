@@ -5,6 +5,7 @@ import type { Article } from '../types';
 const props = defineProps<{ article: Article | null; mode: 'word-runner' | 'spritz'; open: boolean }>();
 defineEmits<{ close: [] }>();
 
+const activeMode = ref<'word-runner' | 'spritz'>(props.mode);
 const index = ref(0);
 const playing = ref(false);
 const wpm = ref(360);
@@ -13,7 +14,7 @@ let timer: number | undefined;
 const words = computed(() => tokenize(articleText(props.article)));
 const currentWord = computed(() => words.value[index.value] || '');
 const progress = computed(() => (words.value.length ? Math.round(((index.value + 1) / words.value.length) * 100) : 0));
-const modeTitle = computed(() => (props.mode === 'spritz' ? 'Spritz Reader' : 'Word Runner'));
+const modeTitle = computed(() => (activeMode.value === 'spritz' ? 'Spritz Reader' : 'Word Runner'));
 const highlightedWord = computed(() => splitAtRecognitionPoint(currentWord.value));
 
 function toggle(): void {
@@ -65,6 +66,12 @@ watch(
   () => props.open,
   (open) => {
     if (!open) close();
+  },
+);
+watch(
+  () => props.mode,
+  (mode) => {
+    activeMode.value = mode;
   },
 );
 
@@ -119,7 +126,7 @@ function splitAtRecognitionPoint(word: string): { before: string; focus: string;
         <button class="icon-button" @click="$emit('close')">×</button>
       </header>
 
-      <div class="rsvp-stage" :class="mode">
+      <div class="rsvp-stage" :class="activeMode">
         <div class="rsvp-guide" />
         <div class="rsvp-word">
           <span>{{ highlightedWord.before }}</span>
@@ -144,8 +151,13 @@ function splitAtRecognitionPoint(word: string): { before: string; focus: string;
         </label>
       </div>
 
+      <div class="rsvp-mode-switch">
+        <button :class="{ active: activeMode === 'word-runner' }" @click="activeMode = 'word-runner'">Word Runner</button>
+        <button :class="{ active: activeMode === 'spritz' }" @click="activeMode = 'spritz'">Spritz focus</button>
+      </div>
+
       <p class="rsvp-hint">
-        {{ mode === 'spritz' ? 'Spritz-style mode fixes your eye on the highlighted recognition letter.' : 'Word Runner streams one word at a time with punctuation-aware pauses.' }}
+        {{ activeMode === 'spritz' ? 'Spritz-style mode fixes your eye on the highlighted recognition letter.' : 'Word Runner streams one word at a time with punctuation-aware pauses.' }}
       </p>
     </section>
   </div>

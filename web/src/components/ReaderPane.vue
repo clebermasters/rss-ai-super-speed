@@ -45,6 +45,7 @@ const contentHtml = computed(() => richTextToHtml(props.article?.content || prop
 const hasContent = computed(() => Boolean(props.article?.content || props.article?.contentPreview));
 const canReadText = computed(() => Boolean(props.article?.content || props.article?.contentPreview || props.article?.summary || props.article?.title));
 const canListenContent = computed(() => Boolean(props.article?.content || props.article?.contentPreview || props.article?.summary));
+const audioSegmentText = computed(() => (props.speechTarget === 'summary' ? '1 / 1' : `${props.speechSegmentIndex + 1} / ${props.speechSegmentCount}`));
 const sourceHost = computed(() => {
   if (!props.article?.link) return '';
   try {
@@ -111,11 +112,7 @@ watch(
       <div class="reader-primary-actions">
         <button :disabled="!canReadText" @click="$emit('rsvp', 'word-runner')">
           <span>Word Runner</span>
-          <small>Rapid reading</small>
-        </button>
-        <button :disabled="!canReadText" @click="$emit('rsvp', 'spritz')">
-          <span>Spritz</span>
-          <small>Focus letter</small>
+          <small>Fast reader with Spritz mode inside</small>
         </button>
         <button :disabled="busy || !canListenContent" @click="$emit('playSpeech', 'content')">
           <span>{{ busyAction === 'Creating article audio' ? 'Creating...' : 'Listen Article' }}</span>
@@ -154,6 +151,21 @@ watch(
         </p>
       </section>
 
+      <section v-if="audioUrl" class="audio-card">
+        <div>
+          <strong>{{ audioLabel }}</strong>
+          <small v-if="speechTarget">Target: {{ speechTarget }} · segment {{ audioSegmentText }}</small>
+        </div>
+        <audio ref="audioElement" :src="audioUrl" controls autoplay @ended="$emit('audioEnded')" />
+        <div class="speech-row">
+          <button @click="audioElement?.play()">Play</button>
+          <button @click="audioElement?.pause()">Pause</button>
+          <button @click="audioElement && (audioElement.currentTime = 0)">Restart</button>
+          <button @click="$emit('stopSpeech')">Stop</button>
+        </div>
+        <p v-if="audioPlaybackError" class="speech-error">{{ audioPlaybackError }}</p>
+      </section>
+
       <section v-if="summaryHtml" class="summary-card">
         <div class="card-title">
           <span>✦</span>
@@ -166,27 +178,11 @@ watch(
         <button :disabled="busy" @click="$emit('fetchContent')">{{ busyAction === 'Fetching full article' ? 'Fetching...' : 'Fetch Full' }}</button>
         <button :disabled="busy || !hasContent" @click="$emit('formatContent')">{{ busyAction === 'Formatting for mobile reading' ? 'Formatting...' : 'Format' }}</button>
         <button :disabled="busy" @click="$emit('summarize')">Summarize</button>
-        <button :disabled="!canReadText" @click="$emit('rsvp', 'word-runner')">Read Fast</button>
       </div>
 
       <p v-if="settings.aiContentFormattingEnabled" class="format-hint">
         Mobile AI formatting is enabled. Fetch Full will queue formatting automatically when needed.
       </p>
-
-      <section v-if="audioUrl" class="audio-card">
-        <div>
-          <strong>{{ audioLabel }}</strong>
-          <small v-if="speechTarget">Target: {{ speechTarget }} · segment {{ speechSegmentIndex + 1 }} / {{ speechSegmentCount }}</small>
-        </div>
-        <audio ref="audioElement" :src="audioUrl" controls autoplay @ended="$emit('audioEnded')" />
-        <div class="speech-row">
-          <button @click="audioElement?.play()">Play</button>
-          <button @click="audioElement?.pause()">Pause</button>
-          <button @click="audioElement && (audioElement.currentTime = 0)">Restart</button>
-          <button @click="$emit('stopSpeech')">Stop</button>
-        </div>
-        <p v-if="audioPlaybackError" class="speech-error">{{ audioPlaybackError }}</p>
-      </section>
 
       <section class="content-card">
         <div class="card-title">

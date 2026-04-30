@@ -80,7 +80,6 @@ onBeforeUnmount(() => observer?.disconnect());
         <footer>
           <a :href="article.link" target="_blank" rel="noreferrer">Open source ↗</a>
           <button @click="$emit('rsvp', article, 'word-runner')">Word Runner</button>
-          <button @click="$emit('rsvp', article, 'spritz')">Spritz</button>
           <button @click="$emit('listen', article, 'content')">Listen</button>
           <button :disabled="!article.summary" @click="$emit('listen', article, 'summary')">Summary Audio</button>
           <button @click="$emit('open', article)">Open side reader</button>

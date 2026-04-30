@@ -60,6 +60,9 @@ class RssApiClient(
     suspend fun summarize(articleId: String): SummaryResponse =
         post("/v1/articles/$articleId/summarize", "{}")
 
+    suspend fun articleSpeech(articleId: String, request: SpeechRequest): SpeechAudio =
+        requestBytes("POST", "/v1/articles/$articleId/tts", json.encodeToString(request))
+
     suspend fun providers(): ProvidersResponse = get("/v1/llm/providers")
 
     suspend fun codexAuth(): CodexAuthResponse = get("/v1/llm/codex-auth")
@@ -76,6 +79,33 @@ class RssApiClient(
     private suspend inline fun <reified T> put(path: String, body: String): T = request("PUT", path, body)
 
     private suspend inline fun <reified T> delete(path: String): T = request("DELETE", path)
+
+    private suspend fun requestBytes(method: String, path: String, body: String? = null): SpeechAudio =
+        withContext(Dispatchers.IO) {
+            val builder = Request.Builder()
+                .url(baseUrl.trimEnd('/') + path)
+                .header("x-rss-ai-token", token)
+                .header("accept", "audio/mpeg")
+            if (body == null) {
+                builder.method(method, null)
+            } else {
+                builder.method(method, body.toRequestBody(mediaType))
+                    .header("content-type", "application/json")
+            }
+            val response = http.newCall(builder.build()).execute()
+            val responseBytes = response.body?.bytes() ?: ByteArray(0)
+            if (!response.isSuccessful) {
+                error("HTTP ${response.code}: ${responseBytes.toString(Charsets.UTF_8)}")
+            }
+            SpeechAudio(
+                bytes = responseBytes,
+                contentType = response.header("content-type") ?: "audio/mpeg",
+                cacheStatus = response.header("x-rss-ai-cache").orEmpty(),
+                segmentIndex = response.header("x-rss-ai-segment-index")?.toIntOrNull() ?: 0,
+                segmentCount = response.header("x-rss-ai-segment-count")?.toIntOrNull() ?: 1,
+                segmentPercent = response.header("x-rss-ai-segment-percent")?.toIntOrNull() ?: 100,
+            )
+        }
 
     private suspend inline fun <reified T> request(method: String, path: String, body: String? = null): T =
         withContext(Dispatchers.IO) {

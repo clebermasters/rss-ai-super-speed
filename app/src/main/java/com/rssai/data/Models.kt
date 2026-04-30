@@ -49,6 +49,9 @@ data class Settings(
     val codexModel: String = "gpt-5.4",
     val codexReasoningEffort: String = "medium",
     val embeddingModel: String = "text-embedding-3-small",
+    val ttsModel: String = "gpt-4o-mini-tts-2025-12-15",
+    val ttsVoice: String = "marin",
+    val ttsInstructions: String = "Read this as a calm, clear personal news reader. Use natural pacing, short pauses between paragraphs, and a warm but neutral tone.",
     val aiContentFormattingEnabled: Boolean = false,
     val browserBypassEnabled: Boolean = true,
     val browserBypassMode: String = "on_blocked",
@@ -84,6 +87,23 @@ data class DeleteFeedResponse(val deleted: Boolean = false)
 
 @Serializable
 data class SummaryResponse(val articleId: String = "", val summary: String = "")
+
+@Serializable
+data class SpeechRequest(
+    val target: String = "content",
+    val segmentPercent: Int = 100,
+    val segmentIndex: Int = 0,
+    val forceRefresh: Boolean = false,
+)
+
+data class SpeechAudio(
+    val bytes: ByteArray,
+    val contentType: String = "audio/mpeg",
+    val cacheStatus: String = "",
+    val segmentIndex: Int = 0,
+    val segmentCount: Int = 1,
+    val segmentPercent: Int = 100,
+)
 
 @Serializable
 data class FetchContentResponse(

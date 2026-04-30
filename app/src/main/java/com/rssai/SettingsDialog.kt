@@ -115,6 +115,9 @@ fun SettingsDialog(
     var aiModel by remember { mutableStateOf(settings.aiModel) }
     var codexModel by remember { mutableStateOf(settings.codexModel) }
     var embeddingModel by remember { mutableStateOf(settings.embeddingModel) }
+    var ttsModel by remember { mutableStateOf(settings.ttsModel) }
+    var ttsVoice by remember { mutableStateOf(settings.ttsVoice) }
+    var ttsInstructions by remember { mutableStateOf(settings.ttsInstructions) }
     var aiContentFormatting by remember { mutableStateOf(settings.aiContentFormattingEnabled) }
     var browserBypass by remember { mutableStateOf(settings.browserBypassEnabled) }
     var browserMode by remember { mutableStateOf(settings.browserBypassMode) }
@@ -133,6 +136,9 @@ fun SettingsDialog(
                             aiModel = aiModel,
                             codexModel = codexModel,
                             embeddingModel = embeddingModel,
+                            ttsModel = ttsModel,
+                            ttsVoice = ttsVoice,
+                            ttsInstructions = ttsInstructions,
                             aiContentFormattingEnabled = aiContentFormatting,
                             browserBypassEnabled = browserBypass,
                             browserBypassMode = browserMode,
@@ -164,6 +170,9 @@ fun SettingsDialog(
                 OutlinedTextField(aiModel, { aiModel = it }, label = { Text("OpenAI-compatible model") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(codexModel, { codexModel = it }, label = { Text("Codex model") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(embeddingModel, { embeddingModel = it }, label = { Text("Embedding model") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(ttsModel, { ttsModel = it }, label = { Text("OpenAI TTS model") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(ttsVoice, { ttsVoice = it }, label = { Text("OpenAI TTS voice") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(ttsInstructions, { ttsInstructions = it }, label = { Text("TTS reading style") }, modifier = Modifier.fillMaxWidth())
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(aiContentFormatting, { aiContentFormatting = it })
                     Text("AI readability formatting for fetched article content")

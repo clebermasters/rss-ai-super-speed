@@ -95,6 +95,8 @@ import com.rssai.data.FetchContentResponse
 import com.rssai.data.ProviderInfo
 import com.rssai.data.RssApiClient
 import com.rssai.data.Settings
+import com.rssai.data.SpeechAudio
+import com.rssai.data.SpeechRequest
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -225,6 +227,7 @@ fun ModernRssLayout(
     onFetchContent: () -> Unit,
     onFormatContent: () -> Unit,
     onSummarize: () -> Unit,
+    onLoadSpeech: suspend (SpeechRequest) -> SpeechAudio,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -276,6 +279,7 @@ fun ModernRssLayout(
                         onFetchContent = onFetchContent,
                         onFormatContent = onFormatContent,
                         onSummarize = onSummarize,
+                        onLoadSpeech = onLoadSpeech,
                         modifier = Modifier.fillMaxSize(),
                     )
                     RssScreen.Saved -> ArticlesDashboard(

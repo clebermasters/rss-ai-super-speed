@@ -84,6 +84,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -95,6 +96,8 @@ import com.rssai.data.FetchContentResponse
 import com.rssai.data.ProviderInfo
 import com.rssai.data.RssApiClient
 import com.rssai.data.Settings
+import com.rssai.data.SpeechAudio
+import com.rssai.data.SpeechRequest
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -110,6 +113,7 @@ fun ReaderDashboard(
     onFetchContent: () -> Unit,
     onFormatContent: () -> Unit,
     onSummarize: () -> Unit,
+    onLoadSpeech: suspend (SpeechRequest) -> SpeechAudio,
     modifier: Modifier = Modifier,
 ) {
     if (article == null) {
@@ -139,7 +143,16 @@ fun ReaderDashboard(
         "Reader"
     }
     val readableContent = article.content ?: article.contentPreview ?: article.summary
+    val context = LocalContext.current
+    val readerListState = rememberPersistentReaderListState(article.articleId)
+    val highlights = rememberArticleHighlights(article.articleId)
     var showWordRunner by remember(article.articleId) { mutableStateOf(false) }
+    fun handleHighlight(text: String) {
+        saveArticleHighlight(context, article.articleId, highlights, text)
+        if (!article.isSaved) {
+            onToggleSave()
+        }
+    }
     val swipeModifier = modifier.pointerInput(article.articleId, canGoPrevious, canGoNext) {
         var totalDrag = 0f
         detectHorizontalDragGestures(
@@ -155,7 +168,8 @@ fun ReaderDashboard(
     }
 
     LazyColumn(
-        swipeModifier,
+        modifier = swipeModifier,
+        state = readerListState,
         contentPadding = PaddingValues(start = 20.dp, top = 8.dp, end = 20.dp, bottom = 20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
@@ -248,6 +262,15 @@ fun ReaderDashboard(
                 ) {
                     Text("Word Runner")
                 }
+                ArticleSpeechControls(
+                    articleId = article.articleId,
+                    ttsModel = settings.ttsModel,
+                    ttsVoice = settings.ttsVoice,
+                    hasArticleText = !readableContent.isNullOrBlank(),
+                    hasSummary = !article.summary.isNullOrBlank(),
+                    onLoadSpeech = onLoadSpeech,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         }
         item {
@@ -257,6 +280,14 @@ fun ReaderDashboard(
             ReaderContentCard(
                 content = readableContent,
                 aiFormatted = article.contentAiFormatted,
+                onHighlight = ::handleHighlight,
+            )
+        }
+        item {
+            ArticleHighlightsCard(
+                highlights = highlights.value,
+                onDelete = { highlight -> deleteArticleHighlight(context, article.articleId, highlights, highlight.id) },
+                modifier = Modifier.fillMaxWidth(),
             )
         }
     }
@@ -297,7 +328,11 @@ fun AiSummaryCard(summary: String?, onSummarize: () -> Unit) {
 }
 
 @Composable
-fun ReaderContentCard(content: String?, aiFormatted: Boolean) {
+fun ReaderContentCard(
+    content: String?,
+    aiFormatted: Boolean,
+    onHighlight: (String) -> Unit,
+) {
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.Transparent),
         border = BorderStroke(1.dp, RssColors.Line),
@@ -316,6 +351,12 @@ fun ReaderContentCard(content: String?, aiFormatted: Boolean) {
                 modifier = Modifier.fillMaxWidth(),
                 textSizeSp = 18f,
                 lineSpacingExtra = 9f,
+                onHighlight = onHighlight,
+            )
+            Text(
+                "Tip: select text in the article, then tap Save highlight. Highlighting also saves the article.",
+                color = RssColors.Muted,
+                style = MaterialTheme.typography.bodySmall,
             )
         }
     }

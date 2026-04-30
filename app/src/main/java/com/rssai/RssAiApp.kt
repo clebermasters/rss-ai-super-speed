@@ -266,7 +266,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                     status = when {
                         result.contentAiFormatted -> "Article is fetched and AI formatted"
                         result.contentFormattingAttempted && result.contentFormattingError != null ->
-                            "Article fetched; AI formatting failed: ${result.contentFormattingError}"
+                            "Article fetched; AI formatting failed: ${safeUserMessage(result.contentFormattingError, "AI formatting failed")}"
                         result.contentFormattingAttempted -> "Article fetched; AI formatting was not applied"
                         shouldFormatExisting -> "AI formatting complete"
                         else -> "Full article content ready"
@@ -276,7 +276,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
             }
         } catch (exc: Exception) {
             if (!background) {
-                status = exc.message ?: "Article preparation failed"
+                status = exc.safeUserMessage("Article preparation failed")
             }
             null
         } finally {
@@ -359,7 +359,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                     "Loaded ${articles.size} articles · ${brandNewArticleIds.size} new"
                 }
             }.onFailure {
-                status = it.message ?: "Load failed"
+                status = it.safeUserMessage("Load failed")
             }
             loading = false
         }
@@ -472,11 +472,15 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                                 updateArticleEverywhere(article.copy(summary = it.summary))
                                 status = "Summary ready"
                             }.onFailure {
-                                status = it.message ?: "Summary failed"
+                                status = it.safeUserMessage("Summary failed")
                             }
                             loading = false
                         }
                     }
+                },
+                onLoadSpeech = { target ->
+                    val article = selected ?: error("No article selected")
+                    client().articleSpeech(article.articleId, target)
                 },
                 modifier = Modifier.fillMaxSize(),
             )
@@ -545,7 +549,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                                     "Added ${it.first.name}; refresh failed"
                                 }
                             }.onFailure {
-                                status = it.message ?: "Add feed failed"
+                                status = it.safeUserMessage("Add feed failed")
                             }
                             loading = false
                         }
@@ -586,7 +590,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                                     "Updated ${it.first.name}; refresh failed"
                                 }
                             }.onFailure {
-                                status = it.message ?: "Update feed failed"
+                                status = it.safeUserMessage("Update feed failed")
                             }
                             loading = false
                         }
@@ -612,7 +616,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                             }.onSuccess {
                                 status = "Removed ${it.name}"
                             }.onFailure {
-                                status = it.message ?: "Remove feed failed"
+                                status = it.safeUserMessage("Remove feed failed")
                             }
                             loading = false
                         }

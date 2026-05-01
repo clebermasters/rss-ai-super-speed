@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { reactive, watch } from 'vue';
+import { computed, reactive, watch } from 'vue';
 import { defaultSettings } from '../composables/useRssReader';
 import type { RuntimeConfig, Settings } from '../types';
 
 const props = defineProps<{
+  availableTags: string[];
   config: RuntimeConfig;
   open: boolean;
   settings: Settings;
@@ -16,6 +17,37 @@ const emit = defineEmits<{
 
 const localConfig = reactive<RuntimeConfig>({ apiBaseUrl: '', apiToken: '', defaultTheme: 'warm' });
 const localSettings = reactive<Settings>(defaultSettings());
+const prefetchTagsText = computed({
+  get: () => normalizeTags(localSettings.scheduledAiPrefetchTags).join(', '),
+  set: (value: string) => {
+    localSettings.scheduledAiPrefetchTags = normalizeTags(value);
+  },
+});
+
+function normalizeTags(value: string | string[]): string[] {
+  const raw = Array.isArray(value) ? value : value.split(',');
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  for (const tag of raw) {
+    const clean = String(tag).trim().replace(/^#/, '').toLowerCase().replace(/\s+/g, ' ');
+    if (!clean || seen.has(clean)) continue;
+    seen.add(clean);
+    tags.push(clean);
+  }
+  return tags;
+}
+
+function togglePrefetchTag(tag: string): void {
+  const clean = normalizeTags([tag])[0];
+  if (!clean) return;
+  const selected = new Set(normalizeTags(localSettings.scheduledAiPrefetchTags));
+  if (selected.has(clean)) {
+    selected.delete(clean);
+  } else {
+    selected.add(clean);
+  }
+  localSettings.scheduledAiPrefetchTags = [...selected].sort();
+}
 
 function resetForm(): void {
   Object.assign(localConfig, { apiBaseUrl: '', apiToken: '', defaultTheme: 'warm' }, props.config);
@@ -101,6 +133,55 @@ watch(() => props.settings, resetForm, { deep: true });
           <small>Use the isolated Playwright Lambda when direct article extraction is blocked.</small>
         </span>
       </label>
+
+      <section class="settings-section">
+        <label class="switch-row">
+          <input v-model="localSettings.scheduledAiPrefetchEnabled" type="checkbox" />
+          <span>
+            <strong>Scheduled AI prefetch cache</strong>
+            <small>Every 5 minutes EventBridge asks Lambda to refresh matching feeds and cache AI summary, full content, and AI formatting before you open articles.</small>
+          </span>
+        </label>
+        <div class="form-grid compact-grid">
+          <label>
+            <span>Prefetch tags</span>
+            <input v-model="prefetchTagsText" placeholder="ai, research, openai" />
+          </label>
+          <label>
+            <span>Articles per run</span>
+            <input v-model.number="localSettings.scheduledAiPrefetchLimit" min="1" max="25" type="number" />
+          </label>
+          <label>
+            <span>Max article age hours</span>
+            <input v-model.number="localSettings.scheduledAiPrefetchMaxAgeHours" min="1" max="168" type="number" />
+          </label>
+          <label>
+            <span>Retry after minutes</span>
+            <input v-model.number="localSettings.scheduledAiPrefetchRetryMinutes" min="5" max="1440" type="number" />
+          </label>
+        </div>
+        <div class="prefetch-options">
+          <label>
+            <input v-model="localSettings.scheduledAiPrefetchContent" type="checkbox" />
+            <span>Fetch and AI-format content</span>
+          </label>
+          <label>
+            <input v-model="localSettings.scheduledAiPrefetchSummaries" type="checkbox" />
+            <span>Generate AI summaries</span>
+          </label>
+        </div>
+        <div v-if="availableTags.length" class="prefetch-tag-cloud">
+          <button
+            v-for="tag in availableTags"
+            :key="tag"
+            type="button"
+            :class="{ active: localSettings.scheduledAiPrefetchTags.includes(tag) }"
+            @click="togglePrefetchTag(tag)"
+          >
+            #{{ tag }}
+          </button>
+        </div>
+      </section>
 
       <p class="security-note">
         The static website deploy writes the API URL into config, but not the token unless you opt in. The token above is saved in this browser only.

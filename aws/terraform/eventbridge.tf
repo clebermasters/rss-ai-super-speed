@@ -11,7 +11,7 @@ resource "aws_cloudwatch_event_target" "scheduled_refresh" {
   arn   = aws_lambda_function.api.arn
   input = jsonencode({
     source = "rss-ai.scheduler"
-    action = "refresh"
+    action = "tag-ai-prefetch"
   })
 }
 

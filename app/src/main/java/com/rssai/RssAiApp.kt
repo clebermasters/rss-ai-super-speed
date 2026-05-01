@@ -511,6 +511,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                     themeMode = themeMode,
                     settings = settings,
                     providers = providers,
+                    availableTags = availableTags,
                     onDismiss = { showSettings = false },
                     onSave = { newBase, newToken, newThemeMode, newSettings ->
                         apiBase = newBase

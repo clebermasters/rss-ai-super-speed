@@ -178,6 +178,7 @@ function saveTags(tags: string[]): void {
     </section>
 
     <SettingsModal
+      :available-tags="reader.availableTags.value.map((tag) => tag.tag)"
       :config="reader.config.value"
       :open="reader.showSettings.value"
       :settings="reader.activeSettings.value"

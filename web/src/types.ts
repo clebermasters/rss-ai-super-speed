@@ -63,6 +63,13 @@ export interface Settings {
   aiContentFormattingEnabled: boolean;
   browserBypassEnabled: boolean;
   browserBypassMode: string;
+  scheduledAiPrefetchEnabled: boolean;
+  scheduledAiPrefetchTags: string[];
+  scheduledAiPrefetchLimit: number;
+  scheduledAiPrefetchMaxAgeHours: number;
+  scheduledAiPrefetchRetryMinutes: number;
+  scheduledAiPrefetchSummaries: boolean;
+  scheduledAiPrefetchContent: boolean;
 }
 
 export interface FetchContentResponse {

@@ -104,13 +104,13 @@ variable "codex_auth_s3_key" {
 variable "enable_scheduled_refresh" {
   description = "Whether EventBridge should periodically refresh feeds."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "scheduled_refresh_expression" {
   description = "EventBridge schedule expression for refreshes."
   type        = string
-  default     = "rate(6 hours)"
+  default     = "rate(5 minutes)"
 }
 
 variable "log_retention_days" {

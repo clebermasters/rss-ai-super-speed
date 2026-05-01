@@ -96,6 +96,13 @@ class RssStorage:
             "refreshOnOpen": True,
             "scheduledRefreshEnabled": False,
             "scheduledRefreshRate": "rate(6 hours)",
+            "scheduledAiPrefetchEnabled": False,
+            "scheduledAiPrefetchTags": [],
+            "scheduledAiPrefetchLimit": 5,
+            "scheduledAiPrefetchMaxAgeHours": 24,
+            "scheduledAiPrefetchRetryMinutes": 60,
+            "scheduledAiPrefetchSummaries": True,
+            "scheduledAiPrefetchContent": True,
             "defaultArticleLimit": 50,
             "cleanupReadAfterDays": 30,
             "semanticSearchEnabled": False,
@@ -104,6 +111,8 @@ class RssStorage:
 
     def update_settings(self, updates: dict[str, Any]) -> dict[str, Any]:
         settings = self.get_settings()
+        if "scheduledAiPrefetchTags" in updates:
+            updates = {**updates, "scheduledAiPrefetchTags": _normalize_tags(updates.get("scheduledAiPrefetchTags"))}
         settings.update(updates)
         item = {"pk": USER_PK, "sk": "SETTINGS#app", **settings, "updatedAt": now_ms()}
         self.table.put_item(Item=_clean(item))

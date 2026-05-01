@@ -427,10 +427,23 @@ def _handle_content_fetch_job(event: dict[str, Any]) -> dict[str, Any]:
                 "failedAt": now_ms(),
             },
         )
+        if _boolish((job.get("options") or {}).get("prefetch")) and job.get("articleId"):
+            storage.update_article(
+                str(job["articleId"]),
+                {
+                    "prefetchStatus": "failed",
+                    "prefetchError": str(exc),
+                    "prefetchProcessedAt": now_ms(),
+                },
+            )
         return {"ok": False, "jobId": job_id, "error": str(exc)}
 
 
 def _content_job_success_message(result: dict[str, Any]) -> str:
+    if result.get("summaryGenerated") and result.get("contentAiFormatted"):
+        return "Content fetch completed with AI summary and readability formatting"
+    if result.get("summaryGenerated"):
+        return "Content fetch completed with AI summary"
     if result.get("contentAiFormatted"):
         if result.get("strategy") == "existing":
             return "Existing content formatted with AI readability"
@@ -475,10 +488,31 @@ def _run_content_fetch_job(storage: RssStorage, job: dict[str, Any]) -> dict[str
             errors.append(f"ai_format: {formatting_error}")
     content = normalize_article_text(content)
     storage.save_article_content(article_id, content)
+    summary_generated = False
+    summary_error = None
     updates = {
         "contentAiFormatted": formatted,
         "contentAiFormattedAt": now_ms() if formatted else None,
     }
+    if _boolish(payload.get("summarizeWithAi")):
+        try:
+            if _boolish(payload.get("forceSummary")) or not article.get("summaryGeneratedAt"):
+                summary_article = {
+                    **article,
+                    "content": content,
+                    "contentPreview": content[:1000],
+                }
+                updates["summary"] = summarize_articles([summary_article], settings, payload)
+                updates["summaryGeneratedAt"] = now_ms()
+                summary_generated = True
+        except Exception as exc:
+            summary_error = str(exc)
+            errors.append(f"ai_summary: {summary_error}")
+    if _boolish(payload.get("prefetch")):
+        updates["prefetchProcessedAt"] = now_ms()
+        updates["prefetchStatus"] = "completed"
+        if summary_error or formatting_error:
+            updates["prefetchError"] = "; ".join(error for error in (summary_error, formatting_error) if error)
     if _should_mark_read(payload):
         updates["isRead"] = True
     storage.update_article(article_id, updates)
@@ -490,6 +524,8 @@ def _run_content_fetch_job(storage: RssStorage, job: dict[str, Any]) -> dict[str
         "contentFormattingAttempted": formatting_attempted,
         "contentAiFormatted": formatted,
         "contentFormattingError": formatting_error,
+        "summaryGenerated": summary_generated,
+        "summaryError": summary_error,
         "errors": errors,
     }
 
@@ -791,7 +827,175 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
 
 
 def _handle_scheduled_refresh() -> dict[str, Any]:
-    return {"ok": True, "result": refresh_feeds(RssStorage())}
+    storage = RssStorage()
+    settings = storage.get_settings()
+    if _boolish(settings.get("scheduledAiPrefetchEnabled")):
+        return {"ok": True, "prefetch": handle_scheduled_ai_prefetch(storage, settings)}
+    if _boolish(settings.get("scheduledRefreshEnabled")):
+        return {"ok": True, "result": refresh_feeds(storage)}
+    return {"ok": True, "skipped": "scheduled refresh and AI prefetch are disabled"}
+
+
+def handle_scheduled_ai_prefetch(storage: RssStorage, settings: dict[str, Any] | None = None) -> dict[str, Any]:
+    settings = settings or storage.get_settings()
+    tags = _normalize_setting_tags(settings.get("scheduledAiPrefetchTags"))
+    if not tags:
+        return {"enabled": False, "reason": "No scheduled AI prefetch tags configured", "tags": []}
+
+    feeds = [
+        feed
+        for feed in storage.list_feeds()
+        if feed.get("enabled", True) and _tags_intersect(feed.get("tags"), tags)
+    ]
+    if not feeds:
+        return {"enabled": True, "reason": "No enabled feeds match scheduled AI prefetch tags", "tags": tags, "feeds": 0, "queued": []}
+
+    refresh_result = refresh_feeds(storage, feeds)
+    candidates = _scheduled_prefetch_candidates(storage, tags, settings)
+    queued: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for article in candidates:
+        work = _scheduled_prefetch_work(article, settings)
+        if not work["needsContent"] and not work["needsSummary"]:
+            skipped.append({"articleId": article.get("articleId"), "reason": "already cached"})
+            continue
+        if _prefetch_recently_queued(article, settings):
+            skipped.append({"articleId": article.get("articleId"), "reason": "recently queued"})
+            continue
+        try:
+            job = _queue_prefetch_content_job(storage, article, work)
+            queued.append(
+                {
+                    "articleId": article.get("articleId"),
+                    "jobId": job.get("jobId"),
+                    "needsContent": work["needsContent"],
+                    "needsSummary": work["needsSummary"],
+                }
+            )
+        except Exception as exc:
+            article_id = str(article.get("articleId") or "")
+            if article_id:
+                storage.update_article(
+                    article_id,
+                    {
+                        "prefetchStatus": "failed",
+                        "prefetchError": str(exc),
+                        "prefetchProcessedAt": now_ms(),
+                    },
+                )
+            errors.append({"articleId": article_id, "error": str(exc)})
+    return {
+        "enabled": True,
+        "tags": tags,
+        "feeds": len(feeds),
+        "refresh": refresh_result,
+        "candidates": len(candidates),
+        "queued": queued,
+        "skipped": skipped,
+        "errors": errors,
+    }
+
+
+def _scheduled_prefetch_candidates(storage: RssStorage, tags: list[str], settings: dict[str, Any]) -> list[dict[str, Any]]:
+    limit = _bounded_int(settings.get("scheduledAiPrefetchLimit"), 5, minimum=1, maximum=25)
+    max_age_hours = _bounded_int(settings.get("scheduledAiPrefetchMaxAgeHours"), 24, minimum=1, maximum=168)
+    articles = storage.list_articles(
+        {
+            "tags": ",".join(tags),
+            "hours": max_age_hours,
+            "limit": max(limit * 4, limit),
+        }
+    )
+    candidates = [article for article in articles if _scheduled_prefetch_work(article, settings)["needsAny"]]
+    return candidates[:limit]
+
+
+def _scheduled_prefetch_work(article: dict[str, Any], settings: dict[str, Any]) -> dict[str, bool]:
+    wants_content = _setting_enabled(settings, "scheduledAiPrefetchContent", True)
+    wants_summary = _setting_enabled(settings, "scheduledAiPrefetchSummaries", True)
+    needs_content = wants_content and (
+        int(article.get("contentChunkCount") or 0) <= 0 or not bool(article.get("contentAiFormatted", False))
+    )
+    needs_summary = wants_summary and not bool(article.get("summaryGeneratedAt"))
+    return {
+        "needsContent": needs_content,
+        "needsSummary": needs_summary,
+        "needsAny": needs_content or needs_summary,
+    }
+
+
+def _queue_prefetch_content_job(storage: RssStorage, article: dict[str, Any], work: dict[str, bool]) -> dict[str, Any]:
+    article_id = str(article.get("articleId") or "")
+    url = str(article.get("link") or "")
+    if not article_id or not url:
+        raise RuntimeError("Article is missing id or link")
+    options = {
+        "prefetch": True,
+        "markRead": False,
+        "formatWithAi": work["needsContent"],
+        "summarizeWithAi": work["needsSummary"],
+    }
+    if not work["needsContent"]:
+        options["formatExistingOnly"] = True
+    job = storage.create_content_job(article_id, url, options, [])
+    storage.update_article(
+        article_id,
+        {
+            "prefetchQueuedAt": now_ms(),
+            "prefetchStatus": "queued",
+            "prefetchJobId": job.get("jobId"),
+            "prefetchError": None,
+        },
+    )
+    _invoke_content_job_async(str(job["jobId"]))
+    return job
+
+
+def _prefetch_recently_queued(article: dict[str, Any], settings: dict[str, Any]) -> bool:
+    queued_at = int(article.get("prefetchQueuedAt") or 0)
+    if not queued_at:
+        return False
+    retry_minutes = _bounded_int(settings.get("scheduledAiPrefetchRetryMinutes"), 60, minimum=5, maximum=1440)
+    return now_ms() - queued_at < retry_minutes * 60 * 1000
+
+
+def _normalize_setting_tags(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw_tags = value.split(",")
+    elif isinstance(value, (list, tuple, set)):
+        raw_tags = value
+    else:
+        raw_tags = [value]
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for tag in raw_tags:
+        clean = " ".join(str(tag).strip().lstrip("#").lower().split())
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        normalized.append(clean)
+    return normalized
+
+
+def _tags_intersect(left: Any, right: list[str]) -> bool:
+    return bool(set(_normalize_setting_tags(left)).intersection(right))
+
+
+def _setting_enabled(settings: dict[str, Any], key: str, default: bool) -> bool:
+    if key not in settings:
+        return default
+    return _boolish(settings.get(key))
+
+
+def _bounded_int(value: Any, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(minimum, min(number, maximum))
 
 
 def parse_json_body(event: dict[str, Any], default: Any | None = None) -> Any:

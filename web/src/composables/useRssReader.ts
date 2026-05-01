@@ -25,6 +25,13 @@ export function defaultSettings(): Settings {
     aiContentFormattingEnabled: false,
     browserBypassEnabled: true,
     browserBypassMode: 'on_blocked',
+    scheduledAiPrefetchEnabled: false,
+    scheduledAiPrefetchTags: [],
+    scheduledAiPrefetchLimit: 5,
+    scheduledAiPrefetchMaxAgeHours: 24,
+    scheduledAiPrefetchRetryMinutes: 60,
+    scheduledAiPrefetchSummaries: true,
+    scheduledAiPrefetchContent: true,
   };
 }
 

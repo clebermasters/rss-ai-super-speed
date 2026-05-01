@@ -105,6 +105,7 @@ fun SettingsDialog(
     themeMode: RssThemeMode,
     settings: Settings,
     providers: List<ProviderInfo>,
+    availableTags: List<String>,
     onDismiss: () -> Unit,
     onSave: (String, String, RssThemeMode, Settings) -> Unit,
 ) {
@@ -121,6 +122,25 @@ fun SettingsDialog(
     var aiContentFormatting by remember { mutableStateOf(settings.aiContentFormattingEnabled) }
     var browserBypass by remember { mutableStateOf(settings.browserBypassEnabled) }
     var browserMode by remember { mutableStateOf(settings.browserBypassMode) }
+    var scheduledAiPrefetch by remember { mutableStateOf(settings.scheduledAiPrefetchEnabled) }
+    var scheduledAiPrefetchTags by remember { mutableStateOf(normalizeTags(settings.scheduledAiPrefetchTags).joinToString(", ")) }
+    var scheduledAiPrefetchLimit by remember { mutableStateOf(settings.scheduledAiPrefetchLimit.toString()) }
+    var scheduledAiPrefetchMaxAgeHours by remember { mutableStateOf(settings.scheduledAiPrefetchMaxAgeHours.toString()) }
+    var scheduledAiPrefetchRetryMinutes by remember { mutableStateOf(settings.scheduledAiPrefetchRetryMinutes.toString()) }
+    var scheduledAiPrefetchSummaries by remember { mutableStateOf(settings.scheduledAiPrefetchSummaries) }
+    var scheduledAiPrefetchContent by remember { mutableStateOf(settings.scheduledAiPrefetchContent) }
+
+    fun prefetchTags(): List<String> = normalizeTags(listOf(scheduledAiPrefetchTags))
+
+    fun togglePrefetchTag(tag: String) {
+        val current = prefetchTags().toMutableSet()
+        if (tag in current) {
+            current.remove(tag)
+        } else {
+            current.add(tag)
+        }
+        scheduledAiPrefetchTags = current.sorted().joinToString(", ")
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -142,6 +162,13 @@ fun SettingsDialog(
                             aiContentFormattingEnabled = aiContentFormatting,
                             browserBypassEnabled = browserBypass,
                             browserBypassMode = browserMode,
+                            scheduledAiPrefetchEnabled = scheduledAiPrefetch,
+                            scheduledAiPrefetchTags = prefetchTags(),
+                            scheduledAiPrefetchLimit = scheduledAiPrefetchLimit.toIntOrNull()?.coerceIn(1, 25) ?: 5,
+                            scheduledAiPrefetchMaxAgeHours = scheduledAiPrefetchMaxAgeHours.toIntOrNull()?.coerceIn(1, 168) ?: 24,
+                            scheduledAiPrefetchRetryMinutes = scheduledAiPrefetchRetryMinutes.toIntOrNull()?.coerceIn(5, 1440) ?: 60,
+                            scheduledAiPrefetchSummaries = scheduledAiPrefetchSummaries,
+                            scheduledAiPrefetchContent = scheduledAiPrefetchContent,
                         ),
                     )
                 },
@@ -181,6 +208,62 @@ fun SettingsDialog(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(browserBypass, { browserBypass = it })
                     Text("Enable browser bot-bypass Lambda")
+                }
+                Text("Scheduled AI prefetch cache", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    "EventBridge runs every 5 minutes. Lambda refreshes only feeds with these tags, then caches AI summaries, full content, and AI formatting without marking articles read.",
+                    color = RssColors.Muted,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(scheduledAiPrefetch, { scheduledAiPrefetch = it })
+                    Text("Enable scheduled tag prefetch")
+                }
+                OutlinedTextField(
+                    value = scheduledAiPrefetchTags,
+                    onValueChange = { scheduledAiPrefetchTags = it },
+                    label = { Text("Prefetch tags") },
+                    placeholder = { Text("ai, research, openai") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (availableTags.isNotEmpty()) {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(availableTags, key = { it }) { tag ->
+                            FilterPill(
+                                "#$tag",
+                                active = tag in prefetchTags(),
+                                onClick = { togglePrefetchTag(tag) },
+                            )
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = scheduledAiPrefetchLimit,
+                        onValueChange = { scheduledAiPrefetchLimit = it },
+                        label = { Text("Per run") },
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedTextField(
+                        value = scheduledAiPrefetchMaxAgeHours,
+                        onValueChange = { scheduledAiPrefetchMaxAgeHours = it },
+                        label = { Text("Age hrs") },
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedTextField(
+                        value = scheduledAiPrefetchRetryMinutes,
+                        onValueChange = { scheduledAiPrefetchRetryMinutes = it },
+                        label = { Text("Retry min") },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(scheduledAiPrefetchContent, { scheduledAiPrefetchContent = it })
+                    Text("Fetch full content and AI-format it")
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(scheduledAiPrefetchSummaries, { scheduledAiPrefetchSummaries = it })
+                    Text("Generate AI summaries")
                 }
                 providers.forEach {
                     Text("${it.id}: ${if (it.configured) "configured" else "not configured"}", style = MaterialTheme.typography.bodySmall)

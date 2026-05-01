@@ -61,6 +61,13 @@ data class Settings(
     val aiContentFormattingEnabled: Boolean = false,
     val browserBypassEnabled: Boolean = true,
     val browserBypassMode: String = "on_blocked",
+    val scheduledAiPrefetchEnabled: Boolean = false,
+    val scheduledAiPrefetchTags: List<String> = emptyList(),
+    val scheduledAiPrefetchLimit: Int = 5,
+    val scheduledAiPrefetchMaxAgeHours: Int = 24,
+    val scheduledAiPrefetchRetryMinutes: Int = 60,
+    val scheduledAiPrefetchSummaries: Boolean = true,
+    val scheduledAiPrefetchContent: Boolean = true,
 )
 
 @Serializable

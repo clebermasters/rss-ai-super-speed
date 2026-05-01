@@ -8,7 +8,10 @@ defineEmits<{ editTags: [feed: Feed]; select: [feedId: string]; toggle: [] }>();
 <template>
   <aside class="feed-rail float-in delay-1" :class="{ collapsed }">
     <div class="rail-tools">
-      <span v-if="!collapsed">Sources</span>
+      <span v-if="!collapsed" class="rail-brand">
+        <strong>Krebs RSS</strong>
+        <small>Personal intelligence stream</small>
+      </span>
       <button class="collapse-button" @click="$emit('toggle')">{{ collapsed ? '→' : '←' }}</button>
     </div>
     <button class="feed-card all" :class="{ active: selectedFeedId === '' }" :title="`All Articles · ${totalUnread} unread`" @click="$emit('select', '')">

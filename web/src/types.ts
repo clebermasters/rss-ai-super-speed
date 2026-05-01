@@ -1,7 +1,6 @@
 export interface RuntimeConfig {
   apiBaseUrl: string;
   apiToken: string;
-  defaultTheme?: string;
 }
 
 export type ArticleFilter = 'all' | 'unread' | 'saved';

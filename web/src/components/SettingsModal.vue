@@ -15,7 +15,7 @@ const emit = defineEmits<{
   save: [config: RuntimeConfig, settings: Settings];
 }>();
 
-const localConfig = reactive<RuntimeConfig>({ apiBaseUrl: '', apiToken: '', defaultTheme: 'warm' });
+const localConfig = reactive<RuntimeConfig>({ apiBaseUrl: '', apiToken: '' });
 const localSettings = reactive<Settings>(defaultSettings());
 const prefetchTagsText = computed({
   get: () => normalizeTags(localSettings.scheduledAiPrefetchTags).join(', '),
@@ -50,7 +50,7 @@ function togglePrefetchTag(tag: string): void {
 }
 
 function resetForm(): void {
-  Object.assign(localConfig, { apiBaseUrl: '', apiToken: '', defaultTheme: 'warm' }, props.config);
+  Object.assign(localConfig, { apiBaseUrl: '', apiToken: '' }, props.config);
   Object.assign(localSettings, defaultSettings(), props.settings);
 }
 
@@ -108,13 +108,6 @@ watch(() => props.settings, resetForm, { deep: true });
             <option value="on_blocked">Only when blocked</option>
             <option value="always">Always for full content</option>
             <option value="disabled">Disabled</option>
-          </select>
-        </label>
-        <label>
-          <span>Default Theme</span>
-          <select v-model="localConfig.defaultTheme">
-            <option value="warm">Warm editorial</option>
-            <option value="dark">Midnight glass</option>
           </select>
         </label>
       </div>

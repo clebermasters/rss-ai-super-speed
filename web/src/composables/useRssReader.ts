@@ -7,7 +7,7 @@ import type { Article, ArticleFilter, Feed, RuntimeConfig, Settings, SpeechAudio
 
 type Notice = { kind: 'info' | 'success' | 'error'; message: string };
 
-const INITIAL_CONFIG: RuntimeConfig = { apiBaseUrl: '', apiToken: '', defaultTheme: 'warm' };
+const INITIAL_CONFIG: RuntimeConfig = { apiBaseUrl: '', apiToken: '' };
 const DEFAULT_SEGMENT_PERCENT = 30;
 const CONTENT_JOB_TIMEOUT_MS = 360_000;
 

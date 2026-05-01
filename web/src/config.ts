@@ -8,7 +8,6 @@ export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
   return {
     apiBaseUrl: local.apiBaseUrl || runtime.apiBaseUrl || '',
     apiToken: local.apiToken || runtime.apiToken || '',
-    defaultTheme: local.defaultTheme || runtime.defaultTheme || 'warm',
   };
 }
 
@@ -24,7 +23,6 @@ export function readStoredConfig(): RuntimeConfig {
     return {
       apiBaseUrl: parsed.apiBaseUrl || '',
       apiToken: parsed.apiToken || '',
-      defaultTheme: parsed.defaultTheme || 'warm',
     };
   } catch {
     return emptyConfig();
@@ -41,7 +39,6 @@ async function fetchRuntimeConfig(): Promise<RuntimeConfig> {
       return {
         apiBaseUrl: parsed.apiBaseUrl || '',
         apiToken: parsed.apiToken || '',
-        defaultTheme: parsed.defaultTheme || 'warm',
       };
     } catch {
       continue;
@@ -51,5 +48,5 @@ async function fetchRuntimeConfig(): Promise<RuntimeConfig> {
 }
 
 function emptyConfig(): RuntimeConfig {
-  return { apiBaseUrl: '', apiToken: '', defaultTheme: 'warm' };
+  return { apiBaseUrl: '', apiToken: '' };
 }

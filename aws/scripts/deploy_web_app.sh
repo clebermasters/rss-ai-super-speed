@@ -16,7 +16,6 @@ REGION="${AWS_REGION:-$(aws configure get region 2>/dev/null || true)}"
 REGION="${REGION:-us-east-1}"
 WEB_DOMAIN_NAME="${WEB_DOMAIN_NAME:-rss.bitslovers.com}"
 WEB_EMBED_API_TOKEN="${WEB_EMBED_API_TOKEN:-0}"
-WEB_THEME="${WEB_THEME:-warm}"
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -125,10 +124,10 @@ echo "Building Vue web app..."
   npm run build
 )
 
-node - "$WEB_DIR/dist/config.json" "$RSS_API_BASE_URL" "$CONFIG_TOKEN" "$WEB_THEME" <<'NODE'
+node - "$WEB_DIR/dist/config.json" "$RSS_API_BASE_URL" "$CONFIG_TOKEN" <<'NODE'
 const fs = require('node:fs');
-const [file, apiBaseUrl, apiToken, defaultTheme] = process.argv.slice(2);
-fs.writeFileSync(file, `${JSON.stringify({ apiBaseUrl, apiToken, defaultTheme }, null, 2)}\n`);
+const [file, apiBaseUrl, apiToken] = process.argv.slice(2);
+fs.writeFileSync(file, `${JSON.stringify({ apiBaseUrl, apiToken }, null, 2)}\n`);
 NODE
 
 echo "Creating/updating S3 static website bucket..."

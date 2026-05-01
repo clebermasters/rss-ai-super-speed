@@ -11,8 +11,8 @@ defineEmits<{
 <template>
   <header class="topbar float-in">
     <div>
-      <p class="eyebrow">Personal intelligence stream</p>
-      <h1>RSS AI Reader</h1>
+      <p class="eyebrow">Precision reader</p>
+      <h1>Inbox</h1>
     </div>
     <div class="topbar-actions">
       <label class="searchbox" aria-label="Search articles">

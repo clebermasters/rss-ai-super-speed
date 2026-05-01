@@ -15,7 +15,7 @@ const emit = defineEmits<{
   save: [config: RuntimeConfig, settings: Settings];
 }>();
 
-const localConfig = reactive<RuntimeConfig>({ apiBaseUrl: '', apiToken: '', defaultTheme: 'warm' });
+const localConfig = reactive<RuntimeConfig>({ apiBaseUrl: '', apiToken: '' });
 const localSettings = reactive<Settings>(defaultSettings());
 
 const prefetchTagsText = computed({
@@ -28,7 +28,7 @@ const prefetchTagsText = computed({
 const visibleSettingsCount = computed(() => Object.keys(localSettings).length);
 
 function resetForm(): void {
-  Object.assign(localConfig, { apiBaseUrl: '', apiToken: '', defaultTheme: 'warm' }, props.config);
+  Object.assign(localConfig, { apiBaseUrl: '', apiToken: '' }, props.config);
   Object.assign(localSettings, defaultSettings(), props.settings);
 }
 
@@ -121,7 +121,7 @@ watch(() => props.settings, resetForm, { deep: true });
         <div class="config-card-title">
           <span>01</span>
           <div>
-            <h3>Connection And Appearance</h3>
+            <h3>Connection</h3>
             <p>Stored locally in this browser. The API token is not written to the static site config.</p>
           </div>
         </div>
@@ -133,13 +133,6 @@ watch(() => props.settings, resetForm, { deep: true });
           <label>
             <span>API Token</span>
             <input v-model.trim="localConfig.apiToken" type="password" placeholder="Stored only in this browser" />
-          </label>
-          <label>
-            <span>Default Theme</span>
-            <select v-model="localConfig.defaultTheme">
-              <option value="warm">Warm editorial</option>
-              <option value="dark">Midnight glass</option>
-            </select>
           </label>
           <label>
             <span>Default article limit</span>

@@ -145,6 +145,7 @@ class RssStorage:
             "defaultArticleLimit": 50,
             "cleanupReadAfterDays": 30,
             "articleContentCacheTtlDays": DEFAULT_ARTICLE_CONTENT_CACHE_TTL_DAYS,
+            "localArticleCacheDays": 30,
             "semanticSearchEnabled": False,
             "exportDefaultFormat": "markdown",
         }
@@ -162,6 +163,16 @@ class RssStorage:
                 "articleContentCacheTtlDays": _bounded_int(
                     updates.get("articleContentCacheTtlDays"),
                     DEFAULT_ARTICLE_CONTENT_CACHE_TTL_DAYS,
+                    minimum=1,
+                    maximum=365,
+                ),
+            }
+        if "localArticleCacheDays" in updates:
+            updates = {
+                **updates,
+                "localArticleCacheDays": _bounded_int(
+                    updates.get("localArticleCacheDays"),
+                    30,
                     minimum=1,
                     maximum=365,
                 ),

@@ -102,6 +102,7 @@ export interface Settings {
   defaultArticleLimit: number;
   cleanupReadAfterDays: number;
   articleContentCacheTtlDays: number;
+  localArticleCacheDays: number;
   semanticSearchEnabled: boolean;
   exportDefaultFormat: string;
 }
@@ -164,6 +165,12 @@ export interface BootstrapResponse {
 export interface ArticlesResponse {
   articles: Article[];
   cursor: number;
+}
+
+export interface SyncPullResponse {
+  articles: Article[];
+  cursor: number;
+  deletions: string[];
 }
 
 export interface FeedsResponse {

@@ -40,6 +40,12 @@ data class Article(
     val isRead: Boolean = false,
     val isSaved: Boolean = false,
     val contentAiFormatted: Boolean = false,
+    val contentAiFormattedAt: Long? = null,
+    val contentExpiresAt: Long? = null,
+    val contentFetchedAt: Long? = null,
+    val fetchedAt: Long? = null,
+    val summaryGeneratedAt: Long? = null,
+    val updatedAt: Long? = null,
 )
 
 @Serializable
@@ -110,6 +116,7 @@ data class Settings(
     val defaultArticleLimit: Int = 50,
     val cleanupReadAfterDays: Int = 30,
     val articleContentCacheTtlDays: Int = 30,
+    val localArticleCacheDays: Int = 30,
     val semanticSearchEnabled: Boolean = false,
     val exportDefaultFormat: String = "markdown",
 )
@@ -126,6 +133,13 @@ data class FeedsResponse(val feeds: List<Feed> = emptyList())
 
 @Serializable
 data class ArticlesResponse(val articles: List<Article> = emptyList(), val cursor: Long = 0)
+
+@Serializable
+data class SyncPullResponse(
+    val articles: List<Article> = emptyList(),
+    val cursor: Long = 0,
+    val deletions: List<String> = emptyList(),
+)
 
 @Serializable
 data class BootstrapResponse(val feeds: List<Feed> = emptyList(), val settings: Settings = Settings())

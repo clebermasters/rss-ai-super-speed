@@ -58,6 +58,7 @@ function normalizeSettings(settings: Settings): Settings {
     defaultArticleLimit: boundedInt(settings.defaultArticleLimit, 50, 1, 1000),
     cleanupReadAfterDays: boundedInt(settings.cleanupReadAfterDays, 30, 1, 3650),
     articleContentCacheTtlDays: boundedInt(settings.articleContentCacheTtlDays, 30, 1, 365),
+    localArticleCacheDays: boundedInt(settings.localArticleCacheDays, 30, 1, 365),
     aiContentFormattingMinWords: boundedInt(settings.aiContentFormattingMinWords, 120, 1, 5000),
     aiContentFormattingChunkChars: boundedInt(settings.aiContentFormattingChunkChars, 8500, 1000, 30000),
     aiContentFormattingMaxChunks: boundedInt(settings.aiContentFormattingMaxChunks, 8, 1, 20),
@@ -253,7 +254,7 @@ watch(() => props.settings, resetForm, { deep: true });
         <div class="switch-grid">
           <label class="switch-row compact">
             <input v-model="localSettings.refreshOnOpen" type="checkbox" />
-            <span><strong>Refresh on open</strong><small>App may refresh/bootstrap on startup.</small></span>
+            <span><strong>Refresh on open</strong><small>Use cache first, then refresh feeds in the background at most every 15 minutes.</small></span>
           </label>
           <label class="switch-row compact">
             <input v-model="localSettings.autoFetchContent" type="checkbox" />
@@ -272,6 +273,10 @@ watch(() => props.settings, resetForm, { deep: true });
           <label>
             <span>DynamoDB article content TTL days</span>
             <input v-model.number="localSettings.articleContentCacheTtlDays" min="1" max="365" type="number" />
+          </label>
+          <label>
+            <span>Device/browser cache days</span>
+            <input v-model.number="localSettings.localArticleCacheDays" min="1" max="365" type="number" />
           </label>
           <label>
             <span>Cleanup read articles after days</span>

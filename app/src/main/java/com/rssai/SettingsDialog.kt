@@ -122,6 +122,7 @@ fun SettingsDialog(
     var aiContentFormatting by remember { mutableStateOf(settings.aiContentFormattingEnabled) }
     var browserBypass by remember { mutableStateOf(settings.browserBypassEnabled) }
     var browserMode by remember { mutableStateOf(settings.browserBypassMode) }
+    var refreshOnOpen by remember { mutableStateOf(settings.refreshOnOpen) }
     var scheduledAiPrefetch by remember { mutableStateOf(settings.scheduledAiPrefetchEnabled) }
     var scheduledAiPrefetchTags by remember { mutableStateOf(normalizeTags(settings.scheduledAiPrefetchTags).joinToString(", ")) }
     var scheduledAiPrefetchLimit by remember { mutableStateOf(settings.scheduledAiPrefetchLimit.toString()) }
@@ -130,6 +131,7 @@ fun SettingsDialog(
     var scheduledAiPrefetchSummaries by remember { mutableStateOf(settings.scheduledAiPrefetchSummaries) }
     var scheduledAiPrefetchContent by remember { mutableStateOf(settings.scheduledAiPrefetchContent) }
     var articleContentCacheTtlDays by remember { mutableStateOf(settings.articleContentCacheTtlDays.toString()) }
+    var localArticleCacheDays by remember { mutableStateOf(settings.localArticleCacheDays.toString()) }
 
     fun prefetchTags(): List<String> = normalizeTags(listOf(scheduledAiPrefetchTags))
 
@@ -163,6 +165,7 @@ fun SettingsDialog(
                             aiContentFormattingEnabled = aiContentFormatting,
                             browserBypassEnabled = browserBypass,
                             browserBypassMode = browserMode,
+                            refreshOnOpen = refreshOnOpen,
                             scheduledAiPrefetchEnabled = scheduledAiPrefetch,
                             scheduledAiPrefetchTags = prefetchTags(),
                             scheduledAiPrefetchLimit = scheduledAiPrefetchLimit.toIntOrNull()?.coerceIn(1, 25) ?: 5,
@@ -171,6 +174,7 @@ fun SettingsDialog(
                             scheduledAiPrefetchSummaries = scheduledAiPrefetchSummaries,
                             scheduledAiPrefetchContent = scheduledAiPrefetchContent,
                             articleContentCacheTtlDays = articleContentCacheTtlDays.toIntOrNull()?.coerceIn(1, 365) ?: 30,
+                            localArticleCacheDays = localArticleCacheDays.toIntOrNull()?.coerceIn(1, 365) ?: 30,
                         ),
                     )
                 },
@@ -210,6 +214,10 @@ fun SettingsDialog(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(browserBypass, { browserBypass = it })
                     Text("Enable browser bot-bypass Lambda")
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(refreshOnOpen, { refreshOnOpen = it })
+                    Text("Refresh feeds in the background on open (cache loads first; throttled to 15 minutes)")
                 }
                 Text("Scheduled AI prefetch cache", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(
@@ -272,6 +280,13 @@ fun SettingsDialog(
                     onValueChange = { articleContentCacheTtlDays = it },
                     label = { Text("DynamoDB article content cache TTL days") },
                     supportingText = { Text("Full fetched/formatted content chunks expire through DynamoDB TTL. Applies at runtime after saving settings.") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = localArticleCacheDays,
+                    onValueChange = { localArticleCacheDays = it },
+                    label = { Text("Device article cache days") },
+                    supportingText = { Text("Feeds, article metadata/content, and highlights stay available offline for this many days.") },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 providers.forEach {

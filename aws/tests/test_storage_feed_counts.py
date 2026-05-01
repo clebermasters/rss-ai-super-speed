@@ -264,6 +264,16 @@ class StorageFeedCountsTest(unittest.TestCase):
         self.assertGreaterEqual(content_item["expiresAt"], int(time.time()) + (21 * 24 * 60 * 60) - 5)
         self.assertEqual(article_item["contentExpiresAt"], content_item["expiresAt"])
 
+    def test_update_settings_bounds_local_article_cache_days(self) -> None:
+        storage = RssStorage.__new__(RssStorage)
+        storage.table = ContentCacheFakeTable()
+
+        too_large = storage.update_settings({"localArticleCacheDays": 999})
+        too_small = storage.update_settings({"localArticleCacheDays": 0})
+
+        self.assertEqual(too_large["localArticleCacheDays"], 365)
+        self.assertEqual(too_small["localArticleCacheDays"], 1)
+
     def test_create_highlight_saves_parent_article_and_deduplicates_text(self) -> None:
         storage = RssStorage.__new__(RssStorage)
         storage.table = HighlightFakeTable()

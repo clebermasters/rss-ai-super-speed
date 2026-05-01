@@ -2,6 +2,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { RssApiClient, RssApiError } from '../api';
 import { loadRuntimeConfig, saveRuntimeConfig } from '../config';
 import { detectBrandNewArticleIds } from '../freshness';
+import { emptyCacheSnapshot, loadOfflineCache, mergeArticles, mergeHighlights, saveOfflineCache } from '../localCache';
 import { loadCachedSpeech, saveCachedSpeech, speechCacheKey } from '../speechCache';
 import type { Article, ArticleFilter, ArticleHighlight, Feed, RuntimeConfig, Settings, SpeechAudio, SpeechTarget } from '../types';
 
@@ -10,6 +11,8 @@ type Notice = { kind: 'info' | 'success' | 'error'; message: string };
 const INITIAL_CONFIG: RuntimeConfig = { apiBaseUrl: '', apiToken: '' };
 const DEFAULT_SEGMENT_PERCENT = 30;
 const CONTENT_JOB_TIMEOUT_MS = 360_000;
+const OPEN_REFRESH_MIN_INTERVAL_MS = 15 * 60 * 1000;
+const OPEN_REFRESH_STORAGE_KEY = 'rss-ai-web:last-open-refresh';
 
 export function defaultSettings(): Settings {
   return {
@@ -52,6 +55,7 @@ export function defaultSettings(): Settings {
     defaultArticleLimit: 50,
     cleanupReadAfterDays: 30,
     articleContentCacheTtlDays: 30,
+    localArticleCacheDays: 30,
     semanticSearchEnabled: false,
     exportDefaultFormat: 'markdown',
   };
@@ -61,9 +65,11 @@ export function useRssReader() {
   const config = ref<RuntimeConfig>(INITIAL_CONFIG);
   const settings = ref<Settings | null>(null);
   const feeds = ref<Feed[]>([]);
+  const allArticles = ref<Article[]>([]);
   const articles = ref<Article[]>([]);
   const highlights = ref<ArticleHighlight[]>([]);
   const articleHighlights = ref<ArticleHighlight[]>([]);
+  const cacheCursor = ref(0);
   const brandNewArticleIds = ref<Set<string>>(new Set());
   const selectedFeedId = ref('');
   const selectedTags = ref<string[]>([]);
@@ -85,6 +91,7 @@ export function useRssReader() {
   const speechSourceChars = ref(0);
   const speechTarget = ref<SpeechTarget | null>(null);
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  let backgroundRefreshInFlight = false;
 
   const configured = computed(() => Boolean(config.value.apiBaseUrl && config.value.apiToken));
   const totalUnread = computed(() => feeds.value.reduce((sum, feed) => sum + Number(feed.unreadCount || 0), 0));
@@ -101,7 +108,7 @@ export function useRssReader() {
         counts.set(tag, current);
       }
     }
-    for (const article of articles.value) {
+    for (const article of allArticles.value.length ? allArticles.value : articles.value) {
       for (const tag of normalizeTags(article.tags)) {
         const current = counts.get(tag) || { tag, feedCount: 0, articleCount: 0, unreadCount: 0 };
         current.articleCount += 1;
@@ -119,10 +126,12 @@ export function useRssReader() {
   async function initialize(): Promise<void> {
     config.value = await loadRuntimeConfig();
     if (!configured.value) {
+      await hydrateFromCache();
       showSettings.value = true;
       notice.value = { kind: 'info', message: 'Add the backend API URL and token to start reading.' };
       return;
     }
+    await hydrateFromCache();
     await bootstrap();
   }
 
@@ -132,17 +141,22 @@ export function useRssReader() {
       const data = await client().bootstrap();
       settings.value = { ...defaultSettings(), ...data.settings };
       feeds.value = data.feeds || [];
-      await loadHighlights();
-      await loadArticles({ preserveSelection: true });
+      await syncIncremental();
+      await loadHighlights({ persist: false });
+      await persistCache();
+      applyArticleFilters({ preserveSelection: true });
     } catch (error) {
       handleError(error, 'Unable to load backend data.');
-      showSettings.value = true;
+      if (!allArticles.value.length && !feeds.value.length) showSettings.value = true;
     } finally {
       loading.value = false;
+      scheduleOpenRefresh();
     }
   }
 
-  async function loadArticles(options: { preserveSelection?: boolean } = {}): Promise<void> {
+  async function loadArticles(options: { preserveSelection?: boolean; network?: boolean } = {}): Promise<void> {
+    applyArticleFilters({ preserveSelection: options.preserveSelection });
+    if (options.network === false) return;
     if (!configured.value) return;
     loading.value = true;
     try {
@@ -167,20 +181,11 @@ export function useRssReader() {
         }
         loadedArticles = [...merged.values()].sort(compareArticlesByRecency).slice(0, limit);
       }
-      articles.value = loadedArticles;
-      brandNewArticleIds.value = detectBrandNewArticleIds(articles.value);
-      const currentId = selectedArticle.value?.articleId;
-      const next = options.preserveSelection
-        ? articles.value.find((article) => article.articleId === currentId) || articles.value[0] || null
-        : articles.value[0] || null;
-      if (next && next.articleId !== currentId) {
-        await selectArticle(next);
-      } else if (!next) {
-        selectedArticle.value = null;
-        articleHighlights.value = [];
-      }
+      allArticles.value = mergeArticles(allArticles.value, loadedArticles);
+      await persistCache();
+      applyArticleFilters({ preserveSelection: options.preserveSelection });
     } catch (error) {
-      handleError(error, 'Unable to load articles.');
+      if (!articles.value.length) handleError(error, 'Unable to load articles.');
     } finally {
       loading.value = false;
     }
@@ -188,29 +193,32 @@ export function useRssReader() {
 
   async function selectArticle(article: Article): Promise<void> {
     selectedArticle.value = article;
+    articleHighlights.value = highlights.value.filter((highlight) => highlight.articleId === article.articleId);
+    loadSpeechPrefs(article.articleId);
     busyAction.value = 'Opening article';
     try {
       const full = await client().article(article.articleId);
       replaceArticle(full);
       selectedArticle.value = full;
       await loadArticleHighlights(full.articleId);
+      await persistCache();
       loadSpeechPrefs(full.articleId);
       if (!full.isRead) {
         const read = await client().markRead(full.articleId);
         replaceArticle(read);
         selectedArticle.value = { ...full, ...read, content: full.content, contentPreview: full.contentPreview };
         refreshFeedCounts();
+        await persistCache();
       }
     } catch (error) {
-      handleError(error, 'Unable to open article.');
-      articleHighlights.value = [];
+      if (!article.content && !article.contentPreview && !article.summary) handleError(error, 'Unable to open article.');
     } finally {
       busyAction.value = '';
     }
   }
 
   async function selectArticleById(articleId: string): Promise<void> {
-    const existing = articles.value.find((article) => article.articleId === articleId);
+    const existing = articles.value.find((article) => article.articleId === articleId) || allArticles.value.find((article) => article.articleId === articleId);
     if (existing) {
       await selectArticle(existing);
       return;
@@ -221,6 +229,7 @@ export function useRssReader() {
       replaceArticle(full);
       selectedArticle.value = full;
       await loadArticleHighlights(full.articleId);
+      await persistCache();
       loadSpeechPrefs(full.articleId);
     } catch (error) {
       handleError(error, 'Unable to open highlighted article.');
@@ -235,7 +244,14 @@ export function useRssReader() {
     try {
       const result = selectedFeedId.value ? await client().refreshFeed(selectedFeedId.value) : await client().refresh();
       notice.value = { kind: 'success', message: `Refresh complete: ${result.saved} new, ${result.fetched} fetched.` };
-      await bootstrap();
+      markOpenRefreshAttempt();
+      await syncIncremental();
+      const data = await client().bootstrap();
+      settings.value = { ...defaultSettings(), ...data.settings };
+      feeds.value = data.feeds || feeds.value;
+      await loadHighlights({ persist: false });
+      await persistCache();
+      applyArticleFilters({ preserveSelection: true });
     } catch (error) {
       handleError(error, 'Refresh failed.');
     } finally {
@@ -270,6 +286,7 @@ export function useRssReader() {
       const updated = { ...article, summary: result.summary };
       replaceArticle(updated);
       selectedArticle.value = updated;
+      await persistCache();
       notice.value = { kind: 'success', message: 'AI summary updated.' };
     } catch (error) {
       handleError(error, 'Summary failed.');
@@ -285,16 +302,21 @@ export function useRssReader() {
       const updated = await client().toggleSave(article.articleId);
       replaceArticle({ ...article, ...updated });
       selectedArticle.value = { ...article, ...updated };
+      await persistCache();
     } catch (error) {
       handleError(error, 'Unable to update saved state.');
     }
   }
 
-  async function loadHighlights(): Promise<void> {
+  async function loadHighlights(options: { persist?: boolean } = {}): Promise<void> {
     if (!configured.value) return;
     try {
       const data = await client().highlights();
       highlights.value = data.highlights || [];
+      if (selectedArticle.value) {
+        articleHighlights.value = highlights.value.filter((highlight) => highlight.articleId === selectedArticle.value?.articleId);
+      }
+      if (options.persist !== false) await persistCache();
     } catch (error) {
       handleError(error, 'Unable to load highlights.');
     }
@@ -308,8 +330,10 @@ export function useRssReader() {
     try {
       const data = await client().articleHighlights(articleId);
       articleHighlights.value = data.highlights || [];
+      highlights.value = mergeHighlights(highlights.value, articleHighlights.value);
+      await persistCache();
     } catch (error) {
-      articleHighlights.value = [];
+      articleHighlights.value = highlights.value.filter((highlight) => highlight.articleId === articleId);
       handleError(error, 'Unable to load article highlights.');
     }
   }
@@ -324,6 +348,7 @@ export function useRssReader() {
       articleHighlights.value = upsertHighlight(articleHighlights.value, created);
       highlights.value = upsertHighlight(highlights.value, created);
       replaceArticle({ ...article, isSaved: true });
+      await persistCache();
       notice.value = { kind: 'success', message: 'Highlight saved for review.' };
     } catch (error) {
       handleError(error, 'Unable to save highlight.');
@@ -338,6 +363,7 @@ export function useRssReader() {
       await client().deleteHighlight(highlight.articleId, highlight.highlightId);
       highlights.value = highlights.value.filter((item) => item.highlightId !== highlight.highlightId);
       articleHighlights.value = articleHighlights.value.filter((item) => item.highlightId !== highlight.highlightId);
+      await persistCache();
       notice.value = { kind: 'success', message: 'Highlight removed.' };
     } catch (error) {
       handleError(error, 'Unable to delete highlight.');
@@ -430,6 +456,7 @@ export function useRssReader() {
     try {
       settings.value = await client().updateSettings(nextSettings);
       notice.value = { kind: 'success', message: 'Settings saved.' };
+      await persistCache();
       await bootstrap();
     } catch (error) {
       handleError(error, 'Settings were saved locally, but backend update failed.');
@@ -462,11 +489,13 @@ export function useRssReader() {
         limit: feed.limit || 20,
       });
       feeds.value = feeds.value.map((item) => (item.feedId === updated.feedId ? { ...item, ...updated } : item));
+      allArticles.value = allArticles.value.map((article) => (article.sourceFeedId === updated.feedId ? { ...article, tags: updated.tags } : article));
       articles.value = articles.value.map((article) => (article.sourceFeedId === updated.feedId ? { ...article, tags: updated.tags } : article));
       if (selectedArticle.value?.sourceFeedId === updated.feedId) {
         selectedArticle.value = { ...selectedArticle.value, tags: updated.tags };
       }
       notice.value = { kind: 'success', message: `Updated tags for ${updated.name}.` };
+      await persistCache();
       await loadArticles({ preserveSelection: true });
     } catch (error) {
       handleError(error, 'Unable to update feed tags.');
@@ -481,6 +510,7 @@ export function useRssReader() {
     try {
       const updated = await client().updateArticle(article.articleId, { tags: normalized });
       replaceArticle({ ...article, ...updated });
+      await persistCache();
       notice.value = { kind: 'success', message: 'Article tags updated.' };
     } catch (error) {
       handleError(error, 'Unable to update article tags.');
@@ -517,6 +547,7 @@ export function useRssReader() {
       replaceArticle(refreshed);
       selectedArticle.value = refreshed;
     }
+    await persistCache();
     notice.value = { kind: 'success', message: result.message || 'Article content updated.' };
   }
 
@@ -537,6 +568,7 @@ export function useRssReader() {
   }
 
   function replaceArticle(article: Article): void {
+    allArticles.value = mergeArticles(allArticles.value, [article]);
     articles.value = articles.value.map((item) => (item.articleId === article.articleId ? { ...item, ...article } : item));
     if (selectedArticle.value?.articleId === article.articleId) {
       selectedArticle.value = { ...selectedArticle.value, ...article };
@@ -549,6 +581,122 @@ export function useRssReader() {
       if (!sourceId || feed.feedId !== sourceId || feed.unreadCount <= 0) return feed;
       return { ...feed, unreadCount: feed.unreadCount - 1 };
     });
+  }
+
+  async function hydrateFromCache(): Promise<void> {
+    const snapshot = (await loadOfflineCache()) || emptyCacheSnapshot();
+    settings.value = { ...defaultSettings(), ...(snapshot.settings || {}) };
+    feeds.value = snapshot.feeds || [];
+    allArticles.value = snapshot.articles || [];
+    highlights.value = snapshot.highlights || [];
+    cacheCursor.value = Number(snapshot.cursor || 0);
+    applyArticleFilters({ preserveSelection: true });
+  }
+
+  async function syncIncremental(): Promise<void> {
+    if (!configured.value) return;
+    if (!cacheCursor.value && !allArticles.value.length) {
+      const initial = await client().articles({ limit: boundedNumber(activeSettings.value.defaultArticleLimit, 50, 1, 500) });
+      allArticles.value = mergeArticles(allArticles.value, initial.articles || []);
+      cacheCursor.value = Number(initial.cursor || Date.now());
+      return;
+    }
+    const pulled = await client().syncPull(cacheCursor.value);
+    allArticles.value = mergeArticles(allArticles.value, pulled.articles || []);
+    for (const deletedId of pulled.deletions || []) {
+      allArticles.value = allArticles.value.filter((article) => article.articleId !== deletedId);
+    }
+    cacheCursor.value = Number(pulled.cursor || cacheCursor.value || Date.now());
+    if (!allArticles.value.length) {
+      const fallback = await client().articles({ limit: boundedNumber(activeSettings.value.defaultArticleLimit, 50, 1, 500) });
+      allArticles.value = mergeArticles(allArticles.value, fallback.articles || []);
+      cacheCursor.value = Number(fallback.cursor || Date.now());
+    }
+  }
+
+  function scheduleOpenRefresh(): void {
+    if (!configured.value || !activeSettings.value.refreshOnOpen) return;
+    if (backgroundRefreshInFlight || !openRefreshDue()) return;
+    backgroundRefreshInFlight = true;
+    markOpenRefreshAttempt();
+    window.setTimeout(() => {
+      void runOpenRefreshInBackground();
+    }, 0);
+  }
+
+  async function runOpenRefreshInBackground(): Promise<void> {
+    refreshing.value = true;
+    try {
+      const result = await client().refresh();
+      await syncIncremental();
+      const data = await client().bootstrap();
+      settings.value = { ...defaultSettings(), ...data.settings };
+      feeds.value = data.feeds || feeds.value;
+      await loadHighlights({ persist: false });
+      await persistCache();
+      applyArticleFilters({ preserveSelection: true });
+      notice.value = { kind: 'success', message: `Background refresh complete: ${result.saved} new, ${result.fetched} fetched.` };
+    } catch (error) {
+      if (!articles.value.length) handleError(error, 'Background refresh failed.');
+    } finally {
+      refreshing.value = false;
+      backgroundRefreshInFlight = false;
+    }
+  }
+
+  function openRefreshDue(): boolean {
+    const last = Number(localStorage.getItem(OPEN_REFRESH_STORAGE_KEY) || 0);
+    return !Number.isFinite(last) || Date.now() - last >= OPEN_REFRESH_MIN_INTERVAL_MS;
+  }
+
+  function markOpenRefreshAttempt(): void {
+    localStorage.setItem(OPEN_REFRESH_STORAGE_KEY, String(Date.now()));
+  }
+
+  async function persistCache(): Promise<void> {
+    await saveOfflineCache(
+      {
+        articles: allArticles.value,
+        cachedAt: Date.now(),
+        cursor: cacheCursor.value || Date.now(),
+        feeds: feeds.value,
+        highlights: highlights.value,
+        settings: activeSettings.value,
+      },
+      activeSettings.value.localArticleCacheDays || 30,
+    );
+  }
+
+  function applyArticleFilters(options: { preserveSelection?: boolean } = {}): void {
+    const limit = boundedNumber(activeSettings.value.defaultArticleLimit, 50, 1, 1000);
+    const q = query.value.trim().toLowerCase();
+    const activeTags = selectedTags.value;
+    let nextArticles = allArticles.value.filter((article) => {
+      if (selectedFeedId.value && article.sourceFeedId !== selectedFeedId.value) return false;
+      if (filter.value === 'unread' && article.isRead) return false;
+      if (filter.value === 'saved' && !article.isSaved) return false;
+      if (activeTags.length && !activeTags.some((tag) => normalizeTags(article.tags).includes(tag))) return false;
+      if (q) {
+        const haystack = [article.title, article.source, article.summary, article.contentPreview, article.content, ...(article.tags || [])].join(' ').toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+      return true;
+    });
+    nextArticles = nextArticles.sort(compareArticlesByRecency).slice(0, limit);
+    articles.value = nextArticles;
+    brandNewArticleIds.value = detectBrandNewArticleIds(articles.value);
+    const currentId = selectedArticle.value?.articleId;
+    const next = options.preserveSelection
+      ? articles.value.find((article) => article.articleId === currentId) || articles.value[0] || null
+      : articles.value[0] || null;
+    if (next && next.articleId !== currentId) {
+      selectedArticle.value = next;
+      articleHighlights.value = highlights.value.filter((highlight) => highlight.articleId === next.articleId);
+      loadSpeechPrefs(next.articleId);
+    } else if (!next) {
+      selectedArticle.value = null;
+      articleHighlights.value = [];
+    }
   }
 
   function handleError(error: unknown, fallback: string): void {
@@ -570,11 +718,11 @@ export function useRssReader() {
 
   function scheduleLoadArticles(): void {
     if (searchTimer) clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => void loadArticles({ preserveSelection: false }), 280);
+    searchTimer = setTimeout(() => void loadArticles({ preserveSelection: false, network: false }), 280);
   }
 
   watch(query, scheduleLoadArticles);
-  watch([selectedFeedId, selectedTags, filter], () => void loadArticles({ preserveSelection: false }));
+  watch([selectedFeedId, selectedTags, filter], () => void loadArticles({ preserveSelection: false, network: false }));
   onMounted(() => void initialize());
 
   return {

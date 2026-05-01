@@ -1,4 +1,4 @@
-import type { Article, ArticleHighlight, ArticlesResponse, BootstrapResponse, Feed, FeedsResponse, FeedUpdateRequest, FetchContentResponse, HighlightsResponse, RefreshResponse, Settings, SpeechAudio, SpeechJobResponse, SpeechOptions, TagsResponse } from './types';
+import type { Article, ArticleHighlight, ArticlesResponse, BootstrapResponse, Feed, FeedsResponse, FeedUpdateRequest, FetchContentResponse, HighlightsResponse, RefreshResponse, Settings, SpeechAudio, SpeechJobResponse, SpeechOptions, SyncPullResponse, TagsResponse } from './types';
 
 export class RssApiError extends Error {
   constructor(message: string, public status = 0) {
@@ -63,6 +63,11 @@ export class RssApiClient {
 
   refresh(): Promise<RefreshResponse> {
     return this.request('POST', '/v1/sync/refresh', {});
+  }
+
+  syncPull(since = 0): Promise<SyncPullResponse> {
+    const params = new URLSearchParams({ since: String(Math.max(0, Math.trunc(since || 0))) });
+    return this.request('GET', `/v1/sync/pull?${params.toString()}`);
   }
 
   refreshFeed(feedId: string): Promise<RefreshResponse> {

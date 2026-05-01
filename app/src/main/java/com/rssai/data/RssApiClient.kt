@@ -47,6 +47,9 @@ class RssApiClient(
 
     suspend fun refresh(): RefreshResponse = post("/v1/sync/refresh", "{}")
 
+    suspend fun syncPull(since: Long = 0): SyncPullResponse =
+        get("/v1/sync/pull?since=${since.coerceAtLeast(0)}")
+
     suspend fun markRead(articleId: String): Article = post("/v1/articles/$articleId/mark-read", "{}")
 
     suspend fun markUnread(articleId: String): Article = post("/v1/articles/$articleId/mark-unread", "{}")

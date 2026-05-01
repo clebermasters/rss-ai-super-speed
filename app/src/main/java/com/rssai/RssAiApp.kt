@@ -99,16 +99,22 @@ import com.rssai.data.Settings
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+private const val OPEN_REFRESH_MIN_INTERVAL_MS = 15L * 60L * 1000L
+private const val OPEN_REFRESH_PREF_KEY = "lastOpenRefreshAt"
+
 @Composable
 fun RssAiApp(openUrl: (String) -> Unit) {
-    val prefs = androidx.compose.ui.platform.LocalContext.current.getSharedPreferences("rss-ai", Context.MODE_PRIVATE)
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val prefs = context.getSharedPreferences("rss-ai", Context.MODE_PRIVATE)
     var apiBase by remember { mutableStateOf(prefs.getString("apiBase", BuildConfig.DEFAULT_RSS_API_BASE_URL).orEmpty()) }
     var apiToken by remember { mutableStateOf(prefs.getString("apiToken", BuildConfig.DEFAULT_RSS_API_TOKEN).orEmpty()) }
     var themeMode by remember { mutableStateOf(RssThemeMode.from(prefs.getString("themeMode", RssThemeMode.Dark.storageValue))) }
     var feeds by remember { mutableStateOf<List<Feed>>(emptyList()) }
+    var allArticles by remember { mutableStateOf<List<Article>>(emptyList()) }
     var articles by remember { mutableStateOf<List<Article>>(emptyList()) }
     var highlights by remember { mutableStateOf<List<ArticleHighlight>>(emptyList()) }
     var articleHighlights by remember { mutableStateOf<List<ArticleHighlight>>(emptyList()) }
+    var cacheCursor by remember { mutableStateOf(0L) }
     var brandNewArticleIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var selected by remember { mutableStateOf<Article?>(null) }
     var readerArticles by remember { mutableStateOf<List<Article>>(emptyList()) }
@@ -117,6 +123,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
     var query by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("Configure API or refresh feeds.") }
     var loading by remember { mutableStateOf(false) }
+    var backgroundRefreshing by remember { mutableStateOf(false) }
     var preparingArticleIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var currentScreen by remember { mutableStateOf(RssScreen.Feeds) }
     var settings by remember {
@@ -139,6 +146,21 @@ fun RssAiApp(openUrl: (String) -> Unit) {
 
     fun client() = RssApiClient(apiBase, apiToken)
 
+    suspend fun persistCache() {
+        saveOfflineCache(
+            context,
+            OfflineCacheSnapshot(
+                articles = allArticles,
+                cachedAt = System.currentTimeMillis(),
+                cursor = cacheCursor,
+                feeds = feeds,
+                highlights = highlights,
+                settings = settings,
+            ),
+            settings.localArticleCacheDays,
+        )
+    }
+
     fun mergeArticle(base: Article, incoming: Article): Article =
         incoming.copy(
             summary = incoming.summary ?: base.summary,
@@ -151,6 +173,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
         )
 
     fun updateArticleEverywhere(incoming: Article) {
+        allArticles = mergeArticles(allArticles, listOf(incoming))
         articles = articles.map { article ->
             if (article.articleId == incoming.articleId) mergeArticle(article, incoming) else article
         }
@@ -180,6 +203,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
         val local = selected?.takeIf { it.articleId == article.articleId }
             ?: readerArticles.firstOrNull { it.articleId == article.articleId }
             ?: articles.firstOrNull { it.articleId == article.articleId }
+            ?: allArticles.firstOrNull { it.articleId == article.articleId }
             ?: return article
         return mergeArticle(article, local)
     }
@@ -191,6 +215,86 @@ fun RssAiApp(openUrl: (String) -> Unit) {
         val queue = activeReaderQueue()
         val index = queue.indexOfFirst { it.articleId == from.articleId }
         return queue.getOrNull(index + delta)
+    }
+
+    fun applyCachedFilters(
+        searchQuery: String = query,
+        sourceFeedId: String = selectedFeedId,
+        tagFilter: String = selectedTag,
+    ) {
+        val q = searchQuery.trim().lowercase()
+        articles = allArticles.filter { article ->
+            if (sourceFeedId.isNotBlank() && article.sourceFeedId != sourceFeedId) return@filter false
+            if (tagFilter.isNotBlank() && tagFilter !in normalizeTags(article.tags)) return@filter false
+            if (q.isNotBlank()) {
+                val haystack = listOf(article.title, article.source, article.summary.orEmpty(), article.contentPreview.orEmpty(), article.content.orEmpty())
+                    .joinToString(" ")
+                    .lowercase()
+                if (!haystack.contains(q)) return@filter false
+            }
+            true
+        }.sortedByDescending { articleSortTime(it) }.take(settings.defaultArticleLimit.coerceIn(1, 1000))
+        brandNewArticleIds = detectBrandNewArticleIds(prefs, articles)
+    }
+
+    suspend fun pullIncrementalArticles(): Int {
+        val limit = settings.defaultArticleLimit.coerceIn(1, 500)
+        if (cacheCursor <= 0 && allArticles.isEmpty()) {
+            val initial = client().articles(limit = limit)
+            allArticles = mergeArticles(allArticles, initial.articles)
+            cacheCursor = initial.cursor.takeIf { it > 0 } ?: System.currentTimeMillis()
+            return initial.articles.size
+        }
+        val pulled = client().syncPull(cacheCursor)
+        allArticles = mergeArticles(allArticles, pulled.articles)
+        pulled.deletions.forEach { deletedId ->
+            allArticles = allArticles.filterNot { it.articleId == deletedId }
+        }
+        cacheCursor = pulled.cursor.takeIf { it > 0 } ?: cacheCursor
+        if (allArticles.isEmpty()) {
+            val fallback = client().articles(limit = limit)
+            allArticles = mergeArticles(allArticles, fallback.articles)
+            cacheCursor = fallback.cursor.takeIf { it > 0 } ?: System.currentTimeMillis()
+            return fallback.articles.size
+        }
+        return pulled.articles.size
+    }
+
+    fun markOpenRefreshAttempt() {
+        prefs.edit().putLong(OPEN_REFRESH_PREF_KEY, System.currentTimeMillis()).apply()
+    }
+
+    fun openRefreshDue(): Boolean {
+        val lastRefresh = prefs.getLong(OPEN_REFRESH_PREF_KEY, 0L)
+        return System.currentTimeMillis() - lastRefresh >= OPEN_REFRESH_MIN_INTERVAL_MS
+    }
+
+    fun scheduleOpenRefresh() {
+        if (!settings.refreshOnOpen || backgroundRefreshing || apiBase.isBlank() || apiToken.isBlank()) return
+        if (!openRefreshDue()) return
+        backgroundRefreshing = true
+        markOpenRefreshAttempt()
+        scope.launch {
+            runCatching {
+                val result = client().refresh()
+                val bootstrap = client().bootstrap()
+                feeds = bootstrap.feeds
+                settings = bootstrap.settings
+                providers = client().providers().providers
+                highlights = client().highlights().highlights
+                pullIncrementalArticles()
+                applyCachedFilters()
+                persistCache()
+                result
+            }.onSuccess {
+                status = "Background refresh complete · ${it.saved} new"
+            }.onFailure {
+                if (articles.isEmpty()) {
+                    status = it.safeUserMessage("Background refresh failed")
+                }
+            }
+            backgroundRefreshing = false
+        }
     }
 
     suspend fun awaitContentResult(initial: FetchContentResponse, background: Boolean, actionLabel: String): FetchContentResponse {
@@ -293,6 +397,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                         else -> "Full article content ready"
                     }
                 }
+                persistCache()
                 finalArticle
             }
         } catch (exc: Exception) {
@@ -324,6 +429,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
     fun openArticle(article: Article, queue: List<Article> = activeReaderQueue(), prewarmDelta: Int = 1) {
         val scopedQueue = queue.takeIf { items -> items.any { it.articleId == article.articleId } }
             ?: articles.takeIf { items -> items.any { it.articleId == article.articleId } }
+            ?: allArticles.takeIf { items -> items.any { it.articleId == article.articleId } }
             ?: listOf(article)
         readerArticles = scopedQueue
         val localArticle = latestArticleSnapshot(article).copy(isRead = true)
@@ -341,6 +447,8 @@ fun RssAiApp(openUrl: (String) -> Unit) {
             }
             updateArticleEverywhere(opened)
             articleHighlights = runCatching { client().articleHighlights(opened.articleId).highlights }.getOrDefault(emptyList())
+            highlights = mergeHighlights(highlights, articleHighlights)
+            persistCache()
             loading = false
             val currentPreparation = launch {
                 prepareArticleForReading(opened, background = false, markRead = true)
@@ -364,22 +472,29 @@ fun RssAiApp(openUrl: (String) -> Unit) {
         searchQuery: String = query,
         sourceFeedId: String = selectedFeedId,
         tagFilter: String = selectedTag,
+        backgroundRefreshAfterLoad: Boolean = false,
     ) {
+        applyCachedFilters(searchQuery, sourceFeedId, tagFilter)
         if (apiBase.isBlank() || apiToken.isBlank()) {
-            showSettings = true
+            if (allArticles.isEmpty() && feeds.isEmpty()) showSettings = true
             return
         }
         scope.launch {
             loading = true
             runCatching {
-                if (refreshFirst) client().refresh()
+                if (refreshFirst) {
+                    client().refresh()
+                    markOpenRefreshAttempt()
+                }
                 val bootstrap = client().bootstrap()
                 feeds = bootstrap.feeds
                 settings = bootstrap.settings
                 providers = client().providers().providers
                 highlights = client().highlights().highlights
-                articles = client().articles(searchQuery, source = sourceFeedId, tag = tagFilter).articles
+                pullIncrementalArticles()
+                applyCachedFilters(searchQuery, sourceFeedId, tagFilter)
                 brandNewArticleIds = detectBrandNewArticleIds(prefs, articles)
+                persistCache()
             }.onSuccess {
                 status = if (brandNewArticleIds.isEmpty()) {
                     "Loaded ${articles.size} articles"
@@ -387,22 +502,39 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                     "Loaded ${articles.size} articles · ${brandNewArticleIds.size} new"
                 }
             }.onFailure {
-                status = it.safeUserMessage("Load failed")
+                status = if (articles.isNotEmpty()) {
+                    "Offline cache loaded · backend sync failed"
+                } else {
+                    it.safeUserMessage("Load failed")
+                }
             }
             loading = false
+            if (backgroundRefreshAfterLoad) {
+                scheduleOpenRefresh()
+            }
         }
     }
 
     LaunchedEffect(Unit) {
+        val snapshot = loadOfflineCache(context)
+        feeds = snapshot.feeds
+        allArticles = snapshot.articles
+        highlights = snapshot.highlights
+        settings = snapshot.settings
+        cacheCursor = snapshot.cursor
+        applyCachedFilters()
+        if (articles.isNotEmpty()) {
+            status = "Offline cache ready · ${articles.size} articles"
+        }
         if (apiBase.isNotBlank() && apiToken.isNotBlank()) {
-            loadData()
+            loadData(backgroundRefreshAfterLoad = settings.refreshOnOpen)
         }
     }
 
     val palette = RssPalettes.forMode(themeMode)
     RssColors.palette = palette
-    val availableTags = remember(feeds, articles) {
-        normalizeTags(feeds.flatMap { it.tags } + articles.flatMap { it.tags }).sorted()
+    val availableTags = remember(feeds, allArticles) {
+        normalizeTags(feeds.flatMap { it.tags } + allArticles.flatMap { it.tags }).sorted()
     }
     val colorScheme = when (themeMode) {
         RssThemeMode.Dark -> androidx.compose.material3.darkColorScheme(
@@ -446,7 +578,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                 query = query,
                 onQuery = {
                     query = it
-                    loadData(searchQuery = it)
+                    applyCachedFilters(searchQuery = it)
                 },
                 selected = selected,
                 screen = currentScreen,
@@ -462,11 +594,11 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                 onSelectFeed = { feed ->
                     selectedFeedId = feed?.feedId.orEmpty()
                     currentScreen = RssScreen.Articles
-                    loadData()
+                    applyCachedFilters(sourceFeedId = selectedFeedId)
                 },
                 onTag = { tag ->
                     selectedTag = tag
-                    loadData(tagFilter = tag)
+                    applyCachedFilters(tagFilter = tag)
                 },
                 onSelect = { article, queue ->
                     openArticle(article, queue = queue)
@@ -492,6 +624,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                             runCatching { client().createHighlight(article.articleId, text) }.onSuccess { highlight ->
                                 upsertHighlight(highlight)
                                 updateArticleEverywhere(article.copy(isSaved = true))
+                                persistCache()
                                 status = "Highlight saved"
                             }.onFailure {
                                 status = it.safeUserMessage("Save highlight failed")
@@ -504,6 +637,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                     scope.launch {
                         runCatching { client().deleteHighlight(highlight.articleId, highlight.highlightId) }.onSuccess {
                             removeHighlight(highlight)
+                            persistCache()
                             status = "Highlight removed"
                         }.onFailure {
                             status = it.safeUserMessage("Remove highlight failed")
@@ -516,6 +650,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                         selected?.let { article ->
                             runCatching { client().toggleSave(article.articleId) }.onSuccess {
                                 updateArticleEverywhere(it)
+                                persistCache()
                             }
                         }
                     }
@@ -547,6 +682,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                             loading = true
                             runCatching { client().summarize(article.articleId) }.onSuccess {
                                 updateArticleEverywhere(article.copy(summary = it.summary))
+                                persistCache()
                                 status = "Summary ready"
                             }.onFailure {
                                 status = it.safeUserMessage("Summary failed")
@@ -583,6 +719,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                         showSettings = false
                         scope.launch {
                             runCatching { client().updateSettings(newSettings) }
+                            persistCache()
                             loadData()
                         }
                     },
@@ -613,8 +750,11 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                                 settings = bootstrap.settings
                                 providers = client().providers().providers
                                 query = ""
-                                articles = client().articles(query, source = selectedFeedId, tag = selectedTag).articles
-                                brandNewArticleIds = detectBrandNewArticleIds(prefs, articles)
+                                val refreshedArticles = client().articles(query, source = selectedFeedId, tag = selectedTag).articles
+                                allArticles = mergeArticles(allArticles, refreshedArticles)
+                                cacheCursor = System.currentTimeMillis()
+                                applyCachedFilters()
+                                persistCache()
                                 currentScreen = RssScreen.Feeds
                                 created to refreshError
                             }.onSuccess {
@@ -655,8 +795,11 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                                 settings = bootstrap.settings
                                 providers = client().providers().providers
                                 query = ""
-                                articles = client().articles(query, source = selectedFeedId, tag = selectedTag).articles
-                                brandNewArticleIds = detectBrandNewArticleIds(prefs, articles)
+                                val refreshedArticles = client().articles(query, source = selectedFeedId, tag = selectedTag).articles
+                                allArticles = mergeArticles(allArticles, refreshedArticles)
+                                cacheCursor = System.currentTimeMillis()
+                                applyCachedFilters()
+                                persistCache()
                                 currentScreen = RssScreen.Feeds
                                 updated to refreshError
                             }.onSuccess {
@@ -687,8 +830,9 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                                 if (selectedFeedId == feed.feedId) {
                                     selectedFeedId = ""
                                 }
-                                articles = client().articles(query, source = selectedFeedId, tag = selectedTag).articles
-                                brandNewArticleIds = detectBrandNewArticleIds(prefs, articles)
+                                allArticles = allArticles.filterNot { it.sourceFeedId == feed.feedId }
+                                applyCachedFilters()
+                                persistCache()
                                 currentScreen = RssScreen.Feeds
                                 feed
                             }.onSuccess {
@@ -714,6 +858,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                                 client().updateArticleTags(target.articleId, tags)
                             }.onSuccess {
                                 updateArticleEverywhere(it)
+                                persistCache()
                                 status = "Article tags updated"
                             }.onFailure {
                                 status = it.safeUserMessage("Update article tags failed")

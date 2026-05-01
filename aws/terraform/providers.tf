@@ -15,6 +15,15 @@ terraform {
 
 provider "aws" {
   region = var.aws_region
+
+  default_tags {
+    tags = {
+      Application = var.app_name
+      ManagedBy   = "terraform"
+      Owner       = "personal"
+      Project     = var.app_name
+    }
+  }
 }
 
 data "aws_caller_identity" "current" {}

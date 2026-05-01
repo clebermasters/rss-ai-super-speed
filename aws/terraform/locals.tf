@@ -11,5 +11,6 @@ locals {
     Application = var.app_name
     ManagedBy   = "terraform"
     Owner       = "personal"
+    Project     = var.app_name
   }
 }

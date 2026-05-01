@@ -116,7 +116,7 @@ variable "scheduled_refresh_expression" {
 variable "log_retention_days" {
   description = "CloudWatch log retention for Lambda logs."
   type        = number
-  default     = 14
+  default     = 1
 }
 
 variable "s3_tts_cache_expiration_days" {

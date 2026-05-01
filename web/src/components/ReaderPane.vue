@@ -2,7 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { isFreshlyPublished, publishedAgo } from '../freshness';
 import { plainDate, richTextToHtml } from '../render';
-import type { Article, Settings, SpeechTarget } from '../types';
+import type { Article, ArticleHighlight, Settings, SpeechTarget } from '../types';
 
 const props = defineProps<{
   article: Article | null;
@@ -11,6 +11,7 @@ const props = defineProps<{
   busyAction: string;
   feedName: string;
   fullscreen: boolean;
+  highlights: ArticleHighlight[];
   isBrandNew: boolean;
   settings: Settings;
   speechCacheStatus: string;
@@ -22,14 +23,16 @@ const props = defineProps<{
   speechTarget: SpeechTarget | null;
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
   audioEnded: [];
+  deleteHighlight: [highlight: ArticleHighlight];
   editTags: [];
   fetchContent: [];
   formatContent: [];
   playSpeech: [target: SpeechTarget];
   regenerateSpeech: [target: SpeechTarget];
   rsvp: [mode: 'word-runner' | 'spritz'];
+  saveHighlight: [text: string];
   setSpeechSegmentIndex: [index: number];
   setSpeechSegmentPercent: [percent: number];
   stopSpeech: [];
@@ -40,8 +43,11 @@ defineEmits<{
 
 const audioElement = ref<HTMLAudioElement | null>(null);
 const audioPlaybackError = ref('');
+const contentElement = ref<HTMLElement | null>(null);
+const selectedHighlightText = ref('');
 const summaryExpanded = ref(true);
 const audioReaderExpanded = ref(false);
+const highlightsExpanded = ref(true);
 const busy = computed(() => Boolean(props.busyAction));
 const summaryHtml = computed(() => richTextToHtml(props.article?.summary || ''));
 const contentHtml = computed(() => richTextToHtml(props.article?.content || props.article?.contentPreview || ''));
@@ -77,8 +83,31 @@ watch(
   () => {
     summaryExpanded.value = true;
     audioReaderExpanded.value = false;
+    highlightsExpanded.value = true;
+    selectedHighlightText.value = '';
   },
 );
+
+function captureArticleSelection(): void {
+  const selection = window.getSelection();
+  const text = selection?.toString().trim().replace(/\s+/g, ' ') || '';
+  if (!text || text.length < 3) {
+    selectedHighlightText.value = '';
+    return;
+  }
+  const node = selection?.anchorNode;
+  if (node && contentElement.value?.contains(node)) {
+    selectedHighlightText.value = text.slice(0, 5000);
+  }
+}
+
+function saveSelectedHighlight(): void {
+  const text = selectedHighlightText.value.trim();
+  if (!text) return;
+  emit('saveHighlight', text);
+  selectedHighlightText.value = '';
+  window.getSelection()?.removeAllRanges();
+}
 </script>
 
 <template>
@@ -119,6 +148,23 @@ watch(
         <button v-for="tag in article.tags || []" :key="tag" class="tag-chip passive">#{{ tag }}</button>
         <button class="mini-tag-button" @click="$emit('editTags')">{{ article.tags?.length ? 'Edit tags' : 'Add tags' }}</button>
       </div>
+
+      <section v-if="highlights.length" class="highlights-card collapsible-card" :class="{ collapsed: !highlightsExpanded }">
+        <button class="collapsible-card-header" @click="highlightsExpanded = !highlightsExpanded">
+          <span class="card-title">
+            <span>▰</span>
+            <strong>Saved highlights</strong>
+            <small>{{ highlights.length }}</small>
+          </span>
+          <b>{{ highlightsExpanded ? 'Hide' : 'Show' }}</b>
+        </button>
+        <div v-if="highlightsExpanded" class="highlight-list compact">
+          <blockquote v-for="highlight in highlights" :key="highlight.highlightId" class="highlight-item">
+            <p>{{ highlight.text }}</p>
+            <button @click="$emit('deleteHighlight', highlight)">Remove</button>
+          </blockquote>
+        </div>
+      </section>
 
       <a class="source-link" :href="article.link" target="_blank" rel="noreferrer">
         <span>↗</span>
@@ -212,7 +258,19 @@ watch(
           <span>☷</span>
           <strong>Article Content</strong>
         </div>
-        <div v-if="contentHtml" class="rich-text" v-html="contentHtml" />
+        <div v-if="selectedHighlightText" class="selection-toolbar">
+          <span>{{ selectedHighlightText.length }} chars selected</span>
+          <button @click="saveSelectedHighlight">Save highlight</button>
+          <button @click="selectedHighlightText = ''">Cancel</button>
+        </div>
+        <div
+          v-if="contentHtml"
+          ref="contentElement"
+          class="rich-text"
+          @keyup="captureArticleSelection"
+          @mouseup="captureArticleSelection"
+          v-html="contentHtml"
+        />
         <div v-else class="reader-empty small">
           <h3>No full content yet</h3>
           <p>Use Fetch Full to extract the complete article. If AI formatting is enabled, it will also make the text easier to read on mobile.</p>

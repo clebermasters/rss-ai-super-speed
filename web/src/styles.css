@@ -288,6 +288,11 @@ h2 {
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
 }
 
+.mode-button span {
+  margin-left: 5px;
+  opacity: 0.72;
+}
+
 .new-count-pill,
 .new-badge,
 .fresh-badge,
@@ -905,6 +910,7 @@ h2 {
 .summary-card,
 .content-card,
 .audio-card,
+.highlights-card,
 .empty-card {
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
@@ -920,6 +926,82 @@ h2 {
 .summary-card {
   margin-bottom: 18px;
   background: linear-gradient(135deg, rgba(255, 252, 244, 0.96), rgba(242, 191, 93, 0.16));
+}
+
+.highlights-card {
+  margin: 12px 0 18px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.highlight-list {
+  display: grid;
+  gap: 10px;
+  padding: 0 14px 14px;
+}
+
+.highlight-item,
+.highlight-review-item {
+  margin: 0;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 12px 12px 0;
+  background: rgba(167, 139, 250, 0.08);
+}
+
+.highlight-item {
+  padding: 11px 12px;
+}
+
+.highlight-item p,
+.highlight-review-item p {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.55;
+}
+
+.highlight-item button,
+.highlight-review-item button,
+.selection-toolbar button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 7px 10px;
+  color: var(--ink);
+  background: rgba(255, 252, 244, 0.76);
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.highlight-item button {
+  margin-top: 8px;
+}
+
+.selection-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 14px;
+  padding: 10px;
+  border: 1px solid rgba(167, 139, 250, 0.38);
+  border-radius: 14px;
+  background: rgba(24, 24, 27, 0.95);
+  color: #fafafa;
+}
+
+.selection-toolbar span {
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.selection-toolbar button:first-of-type {
+  color: #09090b;
+  border-color: transparent;
+  background: var(--accent);
 }
 
 .card-title {
@@ -1187,6 +1269,81 @@ h2 {
 
 .reader-empty.small {
   min-height: 240px;
+}
+
+.highlights-page {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 16px;
+  width: min(1120px, 100%);
+  margin: 0 auto;
+}
+
+.highlights-hero,
+.highlight-group {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  background: var(--paper);
+  box-shadow: var(--shadow);
+}
+
+.highlights-hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: clamp(20px, 4vw, 34px);
+}
+
+.highlights-hero h2 {
+  font-size: clamp(2.4rem, 7vw, 5rem);
+  letter-spacing: -0.06em;
+}
+
+.highlights-hero strong {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.highlight-group {
+  display: grid;
+  gap: 12px;
+  padding: clamp(16px, 2.4vw, 26px);
+}
+
+.highlight-group > header {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.highlight-group h3 {
+  margin-top: 5px;
+  font-size: clamp(1.25rem, 2.6vw, 2rem);
+}
+
+.highlight-group small,
+.highlight-review-item footer {
+  color: var(--muted);
+}
+
+.highlight-review-item {
+  padding: 14px 16px;
+}
+
+.highlight-review-item footer {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  font-size: 0.86rem;
+}
+
+.highlight-empty {
+  padding: 24px;
 }
 
 .flow-page {

@@ -89,6 +89,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.rssai.data.Article
+import com.rssai.data.ArticleHighlight
 import com.rssai.data.CreateFeedRequest
 import com.rssai.data.Feed
 import com.rssai.data.FetchContentResponse
@@ -106,6 +107,8 @@ fun RssAiApp(openUrl: (String) -> Unit) {
     var themeMode by remember { mutableStateOf(RssThemeMode.from(prefs.getString("themeMode", RssThemeMode.Dark.storageValue))) }
     var feeds by remember { mutableStateOf<List<Feed>>(emptyList()) }
     var articles by remember { mutableStateOf<List<Article>>(emptyList()) }
+    var highlights by remember { mutableStateOf<List<ArticleHighlight>>(emptyList()) }
+    var articleHighlights by remember { mutableStateOf<List<ArticleHighlight>>(emptyList()) }
     var brandNewArticleIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var selected by remember { mutableStateOf<Article?>(null) }
     var readerArticles by remember { mutableStateOf<List<Article>>(emptyList()) }
@@ -157,6 +160,20 @@ fun RssAiApp(openUrl: (String) -> Unit) {
         selected = selected?.let { article ->
             if (article.articleId == incoming.articleId) mergeArticle(article, incoming) else article
         }
+    }
+
+    fun upsertHighlight(highlight: ArticleHighlight) {
+        highlights = (listOf(highlight) + highlights.filterNot { it.highlightId == highlight.highlightId })
+            .sortedByDescending { it.createdAt }
+        if (selected?.articleId == highlight.articleId) {
+            articleHighlights = (listOf(highlight) + articleHighlights.filterNot { it.highlightId == highlight.highlightId })
+                .sortedByDescending { it.createdAt }
+        }
+    }
+
+    fun removeHighlight(highlight: ArticleHighlight) {
+        highlights = highlights.filterNot { it.highlightId == highlight.highlightId }
+        articleHighlights = articleHighlights.filterNot { it.highlightId == highlight.highlightId }
     }
 
     fun latestArticleSnapshot(article: Article): Article {
@@ -323,6 +340,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                 localArticle
             }
             updateArticleEverywhere(opened)
+            articleHighlights = runCatching { client().articleHighlights(opened.articleId).highlights }.getOrDefault(emptyList())
             loading = false
             val currentPreparation = launch {
                 prepareArticleForReading(opened, background = false, markRead = true)
@@ -359,6 +377,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                 feeds = bootstrap.feeds
                 settings = bootstrap.settings
                 providers = client().providers().providers
+                highlights = client().highlights().highlights
                 articles = client().articles(searchQuery, source = sourceFeedId, tag = tagFilter).articles
                 brandNewArticleIds = detectBrandNewArticleIds(prefs, articles)
             }.onSuccess {
@@ -418,6 +437,8 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                 feeds = feeds,
                 providers = providers,
                 articles = articles,
+                highlights = highlights,
+                articleHighlights = articleHighlights,
                 brandNewArticleIds = brandNewArticleIds,
                 readerArticles = readerArticles,
                 availableTags = availableTags,
@@ -452,6 +473,42 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                 },
                 onEditArticleTags = { article ->
                     editArticleTags = latestArticleSnapshot(article)
+                },
+                onOpenHighlight = { articleId ->
+                    scope.launch {
+                        runCatching {
+                            client().article(articleId)
+                        }.onSuccess { article ->
+                            openArticle(article, queue = activeReaderQueue())
+                        }.onFailure {
+                            status = it.safeUserMessage("Open highlighted article failed")
+                        }
+                    }
+                },
+                onSaveHighlight = { text ->
+                    scope.launch {
+                        selected?.let { article ->
+                            loading = true
+                            runCatching { client().createHighlight(article.articleId, text) }.onSuccess { highlight ->
+                                upsertHighlight(highlight)
+                                updateArticleEverywhere(article.copy(isSaved = true))
+                                status = "Highlight saved"
+                            }.onFailure {
+                                status = it.safeUserMessage("Save highlight failed")
+                            }
+                            loading = false
+                        }
+                    }
+                },
+                onDeleteHighlight = { highlight ->
+                    scope.launch {
+                        runCatching { client().deleteHighlight(highlight.articleId, highlight.highlightId) }.onSuccess {
+                            removeHighlight(highlight)
+                            status = "Highlight removed"
+                        }.onFailure {
+                            status = it.safeUserMessage("Remove highlight failed")
+                        }
+                    }
                 },
                 onNavigateArticle = { delta -> navigateArticle(delta) },
                 onToggleSave = {

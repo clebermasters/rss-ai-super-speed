@@ -393,6 +393,68 @@ class RssStorage:
         self.table.put_item(Item=_clean(pk_item))
         return article
 
+    def list_highlights(self, article_id: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
+        prefix = f"HIGHLIGHT#{article_id}#" if article_id else "HIGHLIGHT#"
+        highlights: list[dict[str, Any]] = []
+        query_args: dict[str, Any] = {
+            "KeyConditionExpression": Key("pk").eq(USER_PK) & Key("sk").begins_with(prefix),
+        }
+        while True:
+            response = self.table.query(**query_args)
+            highlights.extend(self._strip_keys(item) for item in response.get("Items", []))
+            cursor = response.get("LastEvaluatedKey")
+            if not cursor:
+                break
+            query_args["ExclusiveStartKey"] = cursor
+        highlights.sort(key=lambda item: int(item.get("createdAt") or 0), reverse=True)
+        return highlights[: max(1, min(int(limit or 500), 1000))]
+
+    def create_highlight(self, article_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        article = self.get_article(article_id)
+        if not article:
+            raise ValueError("Article not found")
+        text = " ".join(str(payload.get("text") or "").split())
+        if not text:
+            raise ValueError("Highlight text is required")
+        if len(text) > 5000:
+            raise ValueError("Highlight text must be 5000 characters or fewer")
+        existing = self.list_highlights(article_id=article_id, limit=1000)
+        for highlight in existing:
+            if str(highlight.get("text") or "") == text:
+                return highlight
+        created_at = int(payload.get("createdAt") or now_ms())
+        highlight_id = str(payload.get("highlightId") or payload.get("id") or stable_id(f"{article_id}:{text}:{created_at}", "highlight-"))
+        item = {
+            "pk": USER_PK,
+            "sk": f"HIGHLIGHT#{article_id}#{created_at:013d}#{highlight_id}",
+            "highlightId": highlight_id,
+            "articleId": article_id,
+            "articleTitle": article.get("title") or "",
+            "articleSource": article.get("source") or "",
+            "articleLink": article.get("link") or "",
+            "text": text,
+            "note": str(payload.get("note") or "").strip(),
+            "createdAt": created_at,
+            "updatedAt": now_ms(),
+        }
+        self.table.put_item(Item=_clean(item))
+        if not article.get("isSaved"):
+            self.update_article(article_id, {"isSaved": True})
+        return self._strip_keys(item)
+
+    def delete_highlight(self, article_id: str, highlight_id: str) -> bool:
+        for highlight in self.list_highlights(article_id=article_id, limit=1000):
+            if highlight.get("highlightId") == highlight_id:
+                created_at = int(highlight.get("createdAt") or 0)
+                self.table.delete_item(
+                    Key={
+                        "pk": USER_PK,
+                        "sk": f"HIGHLIGHT#{article_id}#{created_at:013d}#{highlight_id}",
+                    }
+                )
+                return True
+        return False
+
     def save_article_content(self, article_id: str, content: str, content_ttl_days: Any | None = None) -> None:
         chunk_size = 300_000
         chunks = [content[i : i + chunk_size] for i in range(0, len(content), chunk_size)] or [""]

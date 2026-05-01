@@ -84,12 +84,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.rssai.data.Article
+import com.rssai.data.ArticleHighlight
 import com.rssai.data.CreateFeedRequest
 import com.rssai.data.Feed
 import com.rssai.data.FetchContentResponse
@@ -114,6 +114,9 @@ fun ReaderDashboard(
     onFormatContent: () -> Unit,
     onSummarize: () -> Unit,
     onEditTags: (Article) -> Unit,
+    highlights: List<ArticleHighlight>,
+    onSaveHighlight: (String) -> Unit,
+    onDeleteHighlight: (ArticleHighlight) -> Unit,
     onLoadSpeech: suspend (SpeechRequest) -> SpeechAudio,
     modifier: Modifier = Modifier,
 ) {
@@ -144,15 +147,10 @@ fun ReaderDashboard(
         "Reader"
     }
     val readableContent = article.content ?: article.contentPreview ?: article.summary
-    val context = LocalContext.current
     val readerListState = rememberPersistentReaderListState(article.articleId)
-    val highlights = rememberArticleHighlights(article.articleId)
     var showWordRunner by remember(article.articleId) { mutableStateOf(false) }
     fun handleHighlight(text: String) {
-        saveArticleHighlight(context, article.articleId, highlights, text)
-        if (!article.isSaved) {
-            onToggleSave()
-        }
+        onSaveHighlight(text)
     }
     val swipeModifier = modifier.pointerInput(article.articleId, canGoPrevious, canGoNext) {
         var totalDrag = 0f
@@ -288,8 +286,8 @@ fun ReaderDashboard(
         }
         item {
             ArticleHighlightsCard(
-                highlights = highlights.value,
-                onDelete = { highlight -> deleteArticleHighlight(context, article.articleId, highlights, highlight.id) },
+                highlights = highlights,
+                onDelete = onDeleteHighlight,
                 modifier = Modifier.fillMaxWidth(),
             )
         }

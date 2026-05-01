@@ -42,6 +42,18 @@ export interface Article {
   updatedAt?: number | null;
 }
 
+export interface ArticleHighlight {
+  highlightId: string;
+  articleId: string;
+  articleTitle: string;
+  articleSource: string;
+  articleLink: string;
+  text: string;
+  note?: string | null;
+  createdAt: number;
+  updatedAt?: number | null;
+}
+
 export interface FeedUpdateRequest {
   name?: string | null;
   url: string;
@@ -160,6 +172,10 @@ export interface FeedsResponse {
 
 export interface TagsResponse {
   tags: Array<{ tag: string; feedCount: number; articleCount: number; unreadCount: number }>;
+}
+
+export interface HighlightsResponse {
+  highlights: ArticleHighlight[];
 }
 
 export interface RefreshResponse {

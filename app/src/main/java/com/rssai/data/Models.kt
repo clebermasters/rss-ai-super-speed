@@ -48,6 +48,28 @@ data class ArticleTagsRequest(
 )
 
 @Serializable
+data class ArticleHighlight(
+    val highlightId: String = "",
+    val articleId: String = "",
+    val articleTitle: String = "",
+    val articleSource: String = "",
+    val articleLink: String = "",
+    val text: String = "",
+    val note: String? = null,
+    val createdAt: Long = 0,
+    val updatedAt: Long? = null,
+)
+
+@Serializable
+data class HighlightsResponse(val highlights: List<ArticleHighlight> = emptyList())
+
+@Serializable
+data class CreateHighlightRequest(val text: String = "")
+
+@Serializable
+data class DeleteHighlightResponse(val deleted: Boolean = false)
+
+@Serializable
 data class Settings(
     val llmProvider: String = "openai_compatible",
     val aiModel: String = "gpt-5.4",

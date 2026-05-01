@@ -3,7 +3,7 @@ import { RssApiClient, RssApiError } from '../api';
 import { loadRuntimeConfig, saveRuntimeConfig } from '../config';
 import { detectBrandNewArticleIds } from '../freshness';
 import { loadCachedSpeech, saveCachedSpeech, speechCacheKey } from '../speechCache';
-import type { Article, ArticleFilter, Feed, RuntimeConfig, Settings, SpeechAudio, SpeechTarget } from '../types';
+import type { Article, ArticleFilter, ArticleHighlight, Feed, RuntimeConfig, Settings, SpeechAudio, SpeechTarget } from '../types';
 
 type Notice = { kind: 'info' | 'success' | 'error'; message: string };
 
@@ -62,6 +62,8 @@ export function useRssReader() {
   const settings = ref<Settings | null>(null);
   const feeds = ref<Feed[]>([]);
   const articles = ref<Article[]>([]);
+  const highlights = ref<ArticleHighlight[]>([]);
+  const articleHighlights = ref<ArticleHighlight[]>([]);
   const brandNewArticleIds = ref<Set<string>>(new Set());
   const selectedFeedId = ref('');
   const selectedTags = ref<string[]>([]);
@@ -130,6 +132,7 @@ export function useRssReader() {
       const data = await client().bootstrap();
       settings.value = { ...defaultSettings(), ...data.settings };
       feeds.value = data.feeds || [];
+      await loadHighlights();
       await loadArticles({ preserveSelection: true });
     } catch (error) {
       handleError(error, 'Unable to load backend data.');
@@ -174,6 +177,7 @@ export function useRssReader() {
         await selectArticle(next);
       } else if (!next) {
         selectedArticle.value = null;
+        articleHighlights.value = [];
       }
     } catch (error) {
       handleError(error, 'Unable to load articles.');
@@ -189,6 +193,7 @@ export function useRssReader() {
       const full = await client().article(article.articleId);
       replaceArticle(full);
       selectedArticle.value = full;
+      await loadArticleHighlights(full.articleId);
       loadSpeechPrefs(full.articleId);
       if (!full.isRead) {
         const read = await client().markRead(full.articleId);
@@ -198,6 +203,27 @@ export function useRssReader() {
       }
     } catch (error) {
       handleError(error, 'Unable to open article.');
+      articleHighlights.value = [];
+    } finally {
+      busyAction.value = '';
+    }
+  }
+
+  async function selectArticleById(articleId: string): Promise<void> {
+    const existing = articles.value.find((article) => article.articleId === articleId);
+    if (existing) {
+      await selectArticle(existing);
+      return;
+    }
+    busyAction.value = 'Opening article';
+    try {
+      const full = await client().article(articleId);
+      replaceArticle(full);
+      selectedArticle.value = full;
+      await loadArticleHighlights(full.articleId);
+      loadSpeechPrefs(full.articleId);
+    } catch (error) {
+      handleError(error, 'Unable to open highlighted article.');
     } finally {
       busyAction.value = '';
     }
@@ -261,6 +287,62 @@ export function useRssReader() {
       selectedArticle.value = { ...article, ...updated };
     } catch (error) {
       handleError(error, 'Unable to update saved state.');
+    }
+  }
+
+  async function loadHighlights(): Promise<void> {
+    if (!configured.value) return;
+    try {
+      const data = await client().highlights();
+      highlights.value = data.highlights || [];
+    } catch (error) {
+      handleError(error, 'Unable to load highlights.');
+    }
+  }
+
+  async function loadArticleHighlights(articleId: string): Promise<void> {
+    if (!configured.value || !articleId) {
+      articleHighlights.value = [];
+      return;
+    }
+    try {
+      const data = await client().articleHighlights(articleId);
+      articleHighlights.value = data.highlights || [];
+    } catch (error) {
+      articleHighlights.value = [];
+      handleError(error, 'Unable to load article highlights.');
+    }
+  }
+
+  async function saveHighlight(text: string): Promise<void> {
+    const article = selectedArticle.value;
+    const normalized = text.trim().replace(/\s+/g, ' ');
+    if (!article || !normalized) return;
+    busyAction.value = 'Saving highlight';
+    try {
+      const created = await client().createHighlight(article.articleId, normalized);
+      articleHighlights.value = upsertHighlight(articleHighlights.value, created);
+      highlights.value = upsertHighlight(highlights.value, created);
+      replaceArticle({ ...article, isSaved: true });
+      notice.value = { kind: 'success', message: 'Highlight saved for review.' };
+    } catch (error) {
+      handleError(error, 'Unable to save highlight.');
+    } finally {
+      busyAction.value = '';
+    }
+  }
+
+  async function deleteHighlight(highlight: ArticleHighlight): Promise<void> {
+    busyAction.value = 'Deleting highlight';
+    try {
+      await client().deleteHighlight(highlight.articleId, highlight.highlightId);
+      highlights.value = highlights.value.filter((item) => item.highlightId !== highlight.highlightId);
+      articleHighlights.value = articleHighlights.value.filter((item) => item.highlightId !== highlight.highlightId);
+      notice.value = { kind: 'success', message: 'Highlight removed.' };
+    } catch (error) {
+      handleError(error, 'Unable to delete highlight.');
+    } finally {
+      busyAction.value = '';
     }
   }
 
@@ -498,6 +580,7 @@ export function useRssReader() {
   return {
     activeSettings,
     articles,
+    articleHighlights,
     audioLabel,
     audioUrl,
     availableTags,
@@ -512,6 +595,8 @@ export function useRssReader() {
     fetchContent,
     filter,
     formatContent,
+    deleteHighlight,
+    highlights,
     loading,
     notice,
     playSpeech,
@@ -519,7 +604,9 @@ export function useRssReader() {
     refreshFeeds,
     refreshing,
     saveConfig,
+    saveHighlight,
     selectArticle,
+    selectArticleById,
     selectedArticle,
     selectedFeed,
     selectedFeedId,
@@ -585,4 +672,9 @@ function boundedNumber(value: unknown, fallback: number, minimum: number, maximu
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(minimum, Math.min(maximum, Math.trunc(parsed)));
+}
+
+function upsertHighlight(items: ArticleHighlight[], highlight: ArticleHighlight): ArticleHighlight[] {
+  const rest = items.filter((item) => item.highlightId !== highlight.highlightId);
+  return [highlight, ...rest].sort((left, right) => Number(right.createdAt || 0) - Number(left.createdAt || 0));
 }

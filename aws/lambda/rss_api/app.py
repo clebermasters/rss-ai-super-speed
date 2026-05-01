@@ -121,6 +121,9 @@ def route(method: str, path: str, event: dict[str, Any]) -> dict[str, Any]:
         }
         return response(200, {"articles": storage.list_articles(filters), "cursor": now_ms()})
 
+    if method == "GET" and path == "/v1/highlights":
+        return response(200, {"highlights": storage.list_highlights(limit=int(_query_one(query, "limit", "500")))})
+
     if method == "POST" and path == "/v1/articles/mark-all-read":
         return response(200, {"count": storage.mark_all_read()})
 
@@ -225,6 +228,13 @@ def route(method: str, path: str, event: dict[str, Any]) -> dict[str, Any]:
             if action == "embedding":
                 status_code, body = handle_article_embedding(storage, article_id, parse_json_body(event, default={}))
                 return response(status_code, body)
+        if len(segments) == 4 and segments[3] == "highlights" and method == "GET":
+            return response(200, {"highlights": storage.list_highlights(article_id=article_id)})
+        if len(segments) == 4 and segments[3] == "highlights" and method == "POST":
+            return response(201, storage.create_highlight(article_id, parse_json_body(event, default={})))
+        if len(segments) == 5 and segments[3] == "highlights" and method == "DELETE":
+            deleted = storage.delete_highlight(article_id, segments[4])
+            return response(200 if deleted else 404, {"deleted": deleted})
         if len(segments) == 4 and segments[3] == "export" and method == "GET":
             article = storage.get_article(article_id, include_content=True)
             if not article:

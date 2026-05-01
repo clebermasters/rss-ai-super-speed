@@ -50,6 +50,42 @@ class ContentCacheFakeTable:
         }
 
 
+class HighlightFakeTable:
+    def __init__(self) -> None:
+        self.items: dict[tuple[str, str], dict] = {
+            ("USER#default", "ARTICLE#a1"): {
+                "pk": "USER#default",
+                "sk": "ARTICLE#a1",
+                "articleId": "a1",
+                "title": "Readable Article",
+                "source": "Test Feed",
+                "link": "https://example.test/article",
+                "isSaved": False,
+            }
+        }
+
+    def get_item(self, Key: dict) -> dict:
+        item = self.items.get((Key["pk"], Key["sk"]))
+        return {"Item": dict(item)} if item else {}
+
+    def put_item(self, Item: dict, **_: object) -> None:
+        self.items[(Item["pk"], Item["sk"])] = dict(Item)
+
+    def delete_item(self, Key: dict) -> None:
+        self.items.pop((Key["pk"], Key["sk"]), None)
+
+    def query(self, **kwargs: object) -> dict:
+        expression = str(kwargs.get("KeyConditionExpression", ""))
+        prefix = "HIGHLIGHT#a1#" if "a1" in expression else "HIGHLIGHT#"
+        return {
+            "Items": [
+                dict(item)
+                for (_, sk), item in self.items.items()
+                if sk.startswith(prefix)
+            ]
+        }
+
+
 class PaginatedFakeTable:
     def __init__(self, pages: list[dict]) -> None:
         self.pages = pages
@@ -227,6 +263,28 @@ class StorageFeedCountsTest(unittest.TestCase):
         self.assertEqual(updated["articleContentCacheTtlDays"], 21)
         self.assertGreaterEqual(content_item["expiresAt"], int(time.time()) + (21 * 24 * 60 * 60) - 5)
         self.assertEqual(article_item["contentExpiresAt"], content_item["expiresAt"])
+
+    def test_create_highlight_saves_parent_article_and_deduplicates_text(self) -> None:
+        storage = RssStorage.__new__(RssStorage)
+        storage.table = HighlightFakeTable()
+
+        first = storage.create_highlight("a1", {"text": "  important   quote  "})
+        second = storage.create_highlight("a1", {"text": "important quote"})
+
+        self.assertEqual(first["highlightId"], second["highlightId"])
+        self.assertEqual(first["text"], "important quote")
+        self.assertEqual(first["articleTitle"], "Readable Article")
+        self.assertTrue(storage.get_article("a1")["isSaved"])
+        self.assertEqual(len(storage.list_highlights(article_id="a1")), 1)
+
+    def test_delete_highlight_removes_backend_record(self) -> None:
+        storage = RssStorage.__new__(RssStorage)
+        storage.table = HighlightFakeTable()
+        highlight = storage.create_highlight("a1", {"text": "temporary highlight"})
+
+        self.assertTrue(storage.delete_highlight("a1", highlight["highlightId"]))
+        self.assertFalse(storage.delete_highlight("a1", highlight["highlightId"]))
+        self.assertEqual(storage.list_highlights(article_id="a1"), [])
 
 
 if __name__ == "__main__":

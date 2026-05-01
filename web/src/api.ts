@@ -1,4 +1,4 @@
-import type { Article, ArticlesResponse, BootstrapResponse, Feed, FeedsResponse, FeedUpdateRequest, FetchContentResponse, RefreshResponse, Settings, SpeechAudio, SpeechJobResponse, SpeechOptions, TagsResponse } from './types';
+import type { Article, ArticleHighlight, ArticlesResponse, BootstrapResponse, Feed, FeedsResponse, FeedUpdateRequest, FetchContentResponse, HighlightsResponse, RefreshResponse, Settings, SpeechAudio, SpeechJobResponse, SpeechOptions, TagsResponse } from './types';
 
 export class RssApiError extends Error {
   constructor(message: string, public status = 0) {
@@ -34,6 +34,23 @@ export class RssApiClient {
 
   article(articleId: string): Promise<Article> {
     return this.request('GET', `/v1/articles/${encodeURIComponent(articleId)}`);
+  }
+
+  highlights(limit = 500): Promise<HighlightsResponse> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    return this.request('GET', `/v1/highlights?${params.toString()}`);
+  }
+
+  articleHighlights(articleId: string): Promise<HighlightsResponse> {
+    return this.request('GET', `/v1/articles/${encodeURIComponent(articleId)}/highlights`);
+  }
+
+  createHighlight(articleId: string, text: string): Promise<ArticleHighlight> {
+    return this.request('POST', `/v1/articles/${encodeURIComponent(articleId)}/highlights`, { text });
+  }
+
+  deleteHighlight(articleId: string, highlightId: string): Promise<{ deleted: boolean }> {
+    return this.request('DELETE', `/v1/articles/${encodeURIComponent(articleId)}/highlights/${encodeURIComponent(highlightId)}`);
   }
 
   updateFeed(feedId: string, request: FeedUpdateRequest): Promise<Feed> {

@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import ArticleList from './components/ArticleList.vue';
 import ConfigurationPage from './components/ConfigurationPage.vue';
 import FeedRail from './components/FeedRail.vue';
+import HighlightsPage from './components/HighlightsPage.vue';
 import InfiniteArticleFlow from './components/InfiniteArticleFlow.vue';
 import ReaderPane from './components/ReaderPane.vue';
 import RsvpReader from './components/RsvpReader.vue';
@@ -18,6 +19,7 @@ const feedRailCollapsed = ref(false);
 const articleListCollapsed = ref(false);
 const readerFullscreen = ref(false);
 const flowMode = ref(false);
+const highlightsMode = ref(false);
 const rsvpOpen = ref(false);
 const rsvpMode = ref<'word-runner' | 'spritz'>('word-runner');
 const tagEditor = ref<
@@ -28,6 +30,7 @@ const tagEditor = ref<
 
 function toggleFlowMode(): void {
   flowMode.value = !flowMode.value;
+  highlightsMode.value = false;
   if (flowMode.value) {
     reader.setFeed('');
     reader.filter.value = 'all';
@@ -35,10 +38,23 @@ function toggleFlowMode(): void {
   }
 }
 
+function toggleHighlightsMode(): void {
+  highlightsMode.value = !highlightsMode.value;
+  flowMode.value = false;
+  readerFullscreen.value = false;
+}
+
 function selectFeed(feedId: string): void {
   reader.setFeed(feedId);
   flowMode.value = feedId === '';
+  highlightsMode.value = false;
   if (flowMode.value) reader.filter.value = 'all';
+}
+
+function openHighlightedArticle(articleId: string): void {
+  highlightsMode.value = false;
+  flowMode.value = false;
+  void reader.selectArticleById(articleId);
 }
 
 function openFlowArticle(article: Article): void {
@@ -95,9 +111,12 @@ function saveTags(tags: string[]): void {
       v-model:query="reader.query.value"
       :configured="reader.configured.value"
       :flow-active="flowMode"
+      :highlight-count="reader.highlights.value.length"
+      :highlights-active="highlightsMode"
       :loading="reader.refreshing.value"
       :new-count="reader.brandNewCount.value"
       @flow="toggleFlowMode"
+      @highlights="toggleHighlightsMode"
       @refresh="reader.refreshFeeds"
       @settings="reader.showSettings.value = true"
     />
@@ -129,6 +148,13 @@ function saveTags(tags: string[]): void {
       @listen="listenFlowArticle"
       @open="openFlowArticle"
       @rsvp="openFlowRsvp"
+    />
+
+    <HighlightsPage
+      v-else-if="!reader.showSettings.value && highlightsMode"
+      :highlights="reader.highlights.value"
+      @delete="reader.deleteHighlight"
+      @open="openHighlightedArticle"
     />
 
     <section
@@ -163,6 +189,7 @@ function saveTags(tags: string[]): void {
         :busy-action="reader.busyAction.value"
         :feed-name="reader.selectedFeed.value?.name || 'All Articles'"
         :fullscreen="readerFullscreen"
+        :highlights="reader.articleHighlights.value"
         :is-brand-new="Boolean(reader.selectedArticle.value && reader.brandNewArticleIds.value.has(reader.selectedArticle.value.articleId))"
         :settings="reader.activeSettings.value"
         :speech-cache-status="reader.speechCacheStatus.value"
@@ -176,9 +203,11 @@ function saveTags(tags: string[]): void {
         @edit-tags="editSelectedArticleTags"
         @fetch-content="reader.fetchContent"
         @format-content="reader.formatContent"
+        @delete-highlight="reader.deleteHighlight"
         @play-speech="reader.playSpeech"
         @regenerate-speech="(target) => reader.playSpeech(target, { forceRefresh: true })"
         @rsvp="openRsvp"
+        @save-highlight="reader.saveHighlight"
         @set-speech-segment-index="reader.setSpeechSegmentIndex"
         @set-speech-segment-percent="reader.setSpeechSegmentPercent"
         @stop-speech="reader.stopSpeech"

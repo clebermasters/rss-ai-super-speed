@@ -56,6 +56,18 @@ class RssApiClient(
     suspend fun updateArticleTags(articleId: String, tags: List<String>): Article =
         patch("/v1/articles/$articleId", json.encodeToString(ArticleTagsRequest(tags)))
 
+    suspend fun highlights(limit: Int = 500): HighlightsResponse =
+        get("/v1/highlights?limit=${limit.coerceIn(1, 1000)}")
+
+    suspend fun articleHighlights(articleId: String): HighlightsResponse =
+        get("/v1/articles/$articleId/highlights")
+
+    suspend fun createHighlight(articleId: String, text: String): ArticleHighlight =
+        post("/v1/articles/$articleId/highlights", json.encodeToString(CreateHighlightRequest(text)))
+
+    suspend fun deleteHighlight(articleId: String, highlightId: String): DeleteHighlightResponse =
+        delete("/v1/articles/$articleId/highlights/$highlightId")
+
     suspend fun fetchContent(articleId: String, formatWithAi: Boolean = false, markRead: Boolean = true): FetchContentResponse =
         post("/v1/articles/$articleId/fetch-content", """{"formatWithAi":$formatWithAi,"markRead":$markRead}""")
 

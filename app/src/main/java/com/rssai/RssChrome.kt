@@ -89,6 +89,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.rssai.data.Article
+import com.rssai.data.ArticleHighlight
 import com.rssai.data.CreateFeedRequest
 import com.rssai.data.Feed
 import com.rssai.data.FetchContentResponse
@@ -106,6 +107,7 @@ enum class RssScreen(val label: String) {
     Flow("Flow"),
     Reader("Reader"),
     Saved("Saved"),
+    Highlights("Highlights"),
 }
 
 enum class RssThemeMode(val storageValue: String, val label: String) {
@@ -206,6 +208,8 @@ fun ModernRssLayout(
     feeds: List<Feed>,
     providers: List<ProviderInfo>,
     articles: List<Article>,
+    highlights: List<ArticleHighlight>,
+    articleHighlights: List<ArticleHighlight>,
     brandNewArticleIds: Set<String>,
     readerArticles: List<Article>,
     availableTags: List<String>,
@@ -227,6 +231,9 @@ fun ModernRssLayout(
     onTag: (String) -> Unit,
     onSelect: (Article, List<Article>) -> Unit,
     onEditArticleTags: (Article) -> Unit,
+    onOpenHighlight: (String) -> Unit,
+    onDeleteHighlight: (ArticleHighlight) -> Unit,
+    onSaveHighlight: (String) -> Unit,
     onNavigateArticle: (Int) -> Unit,
     onToggleSave: () -> Unit,
     onFetchContent: () -> Unit,
@@ -297,6 +304,9 @@ fun ModernRssLayout(
                         onFormatContent = onFormatContent,
                         onSummarize = onSummarize,
                         onEditTags = onEditArticleTags,
+                        highlights = articleHighlights,
+                        onSaveHighlight = onSaveHighlight,
+                        onDeleteHighlight = onDeleteHighlight,
                         onLoadSpeech = onLoadSpeech,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -313,6 +323,15 @@ fun ModernRssLayout(
                         emptyTitle = "No saved articles yet",
                         emptyBody = "Bookmark articles from the reader and they will collect here.",
                         modifier = Modifier.fillMaxSize(),
+                    )
+                    RssScreen.Highlights -> HighlightsReviewScreen(
+                        highlights = highlights,
+                        onBack = { onScreen(RssScreen.Articles) },
+                        onOpen = onOpenHighlight,
+                        onDelete = onDeleteHighlight,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(20.dp),
                     )
                 }
             }
@@ -397,7 +416,7 @@ fun ModernBottomBar(screen: RssScreen, onScreen: (RssScreen) -> Unit) {
         containerColor = RssColors.BottomBar,
         tonalElevation = 0.dp,
     ) {
-        val items = listOf(RssScreen.Feeds, RssScreen.Articles, RssScreen.Flow, RssScreen.Reader, RssScreen.Saved)
+        val items = listOf(RssScreen.Feeds, RssScreen.Articles, RssScreen.Flow, RssScreen.Reader, RssScreen.Saved, RssScreen.Highlights)
         items.forEach { item ->
             NavigationBarItem(
                 selected = screen == item,
@@ -409,6 +428,7 @@ fun ModernBottomBar(screen: RssScreen, onScreen: (RssScreen) -> Unit) {
                         RssScreen.Flow -> Icon(Icons.Default.AutoAwesome, contentDescription = null)
                         RssScreen.Reader -> Icon(Icons.Default.Book, contentDescription = null)
                         RssScreen.Saved -> Icon(Icons.Default.BookmarkBorder, contentDescription = null)
+                        RssScreen.Highlights -> Icon(Icons.Default.Bookmark, contentDescription = null)
                     }
                 },
                 label = { Text(item.label) },

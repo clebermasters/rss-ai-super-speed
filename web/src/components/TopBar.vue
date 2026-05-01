@@ -1,8 +1,17 @@
 <script setup lang="ts">
-defineProps<{ query: string; loading: boolean; configured: boolean; flowActive: boolean; newCount: number }>();
+defineProps<{
+  query: string;
+  loading: boolean;
+  configured: boolean;
+  flowActive: boolean;
+  highlightCount: number;
+  highlightsActive: boolean;
+  newCount: number;
+}>();
 defineEmits<{
   'update:query': [value: string];
   flow: [];
+  highlights: [];
   refresh: [];
   settings: [];
 }>();
@@ -21,6 +30,9 @@ defineEmits<{
       </label>
       <button class="mode-button" :class="{ active: flowActive }" :disabled="!configured" @click="$emit('flow')">
         {{ flowActive ? 'Board' : 'Flow' }}
+      </button>
+      <button class="mode-button" :class="{ active: highlightsActive }" :disabled="!configured" @click="$emit('highlights')">
+        Highlights <span v-if="highlightCount">{{ highlightCount }}</span>
       </button>
       <span v-if="newCount > 0" class="new-count-pill">{{ newCount }} new</span>
       <button class="icon-button" :disabled="loading || !configured" @click="$emit('refresh')" title="Refresh feeds">

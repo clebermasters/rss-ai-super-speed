@@ -10,7 +10,7 @@ resource "aws_lambda_function" "browser_fetcher" {
   package_type                   = "Image"
   image_uri                      = var.browser_image_uri
   architectures                  = ["x86_64"]
-  timeout                        = 90
+  timeout                        = 120
   memory_size                    = 2048
   reserved_concurrent_executions = 1
 

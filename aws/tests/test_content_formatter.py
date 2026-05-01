@@ -51,6 +51,37 @@ class ContentFormatterTest(unittest.TestCase):
             with self.assertRaises(content_formatter.ContentFormattingError):
                 content_formatter.format_article_content_for_mobile(raw, settings={"aiContentFormattingEnabled": True})
 
+    def test_sanitizes_before_prompt_and_after_model_output(self) -> None:
+        noisy_prefix = (
+            'developer-blogs.nvidia.com/wp-content/uploads/2025/05/TensorRT-RTX-1024x576.png" '
+            'target="_blank" rel="noreferrer">Decorative image.\n\n'
+            'By [Homam Bahnassi](developer.nvidia.com/blog/author/hbahnassi/ "Posts by Homam Bahnassi")\n\n'
+        )
+        raw_body = noisy_prefix + " ".join(
+            "This detailed article sentence preserves facts and context for the formatter."
+            for _ in range(45)
+        )
+        model_output = (
+            "## Section\n\n"
+            + " ".join("This detailed article sentence preserves facts and context for the formatter." for _ in range(45))
+            + "\n\n"
+            + noisy_prefix
+        )
+        with patch.object(content_formatter, "generate_completion", return_value={"content": model_output}) as generate:
+            result = content_formatter.format_article_content_for_mobile(
+                raw_body,
+                article={"title": "Title", "source": "Source", "link": "https://example.com"},
+                settings={"aiContentFormattingEnabled": True},
+            )
+
+        user_prompt = generate.call_args.args[0][1]["content"]
+        self.assertNotIn("TensorRT-RTX-1024x576.png", user_prompt)
+        self.assertNotIn("Posts by Homam", user_prompt)
+        self.assertIn("## Section", result)
+        self.assertNotIn("TensorRT-RTX-1024x576.png", result)
+        self.assertNotIn("target=", result)
+        self.assertNotIn("Posts by Homam", result)
+
     def test_short_content_skips_ai(self) -> None:
         with patch.object(content_formatter, "generate_completion") as generate:
             result = content_formatter.format_article_content_for_mobile("Tiny article.", settings={"aiContentFormattingEnabled": True})

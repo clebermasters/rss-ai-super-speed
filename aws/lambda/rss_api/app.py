@@ -13,6 +13,7 @@ import boto3
 from ai_client import generate_embedding, list_models, list_providers, summarize_articles
 from content_formatter import format_article_content_for_mobile, should_format_content_with_ai
 from content_fetcher import fetch_direct, fetch_with_fallbacks
+from content_sanitizer import normalize_article_text
 from formatters import format_articles
 from rss_fetcher import fetch_feeds
 from storage import RssStorage, now_ms
@@ -331,6 +332,7 @@ def handle_get_content_job(storage: RssStorage, job_id: str) -> dict[str, Any]:
     job = storage.get_content_job(job_id)
     if not job:
         return {"error": "Content job not found"}
+    job = _fail_stale_content_job(storage, job_id, job)
     body: dict[str, Any] = {
         "jobId": job_id,
         "articleId": job.get("articleId", ""),
@@ -351,6 +353,28 @@ def handle_get_content_job(storage: RssStorage, job_id: str) -> dict[str, Any]:
             body["content"] = article.get("content") or ""
             body["contentAiFormatted"] = bool(article.get("contentAiFormatted", body["contentAiFormatted"]))
     return body
+
+
+def _fail_stale_content_job(storage: RssStorage, job_id: str, job: dict[str, Any]) -> dict[str, Any]:
+    if str(job.get("status") or "") not in {"queued", "running"}:
+        return job
+    stale_seconds = int(os.environ.get("CONTENT_JOB_STALE_SECONDS", "420"))
+    timestamp = int(job.get("updatedAt") or job.get("createdAt") or 0)
+    if timestamp and now_ms() - timestamp <= stale_seconds * 1000:
+        return job
+    message = "Content job exceeded the backend timeout budget. Please retry Fetch Full."
+    errors = list(job.get("errors") or [])
+    if message not in errors:
+        errors.append(message)
+    return storage.update_content_job(
+        job_id,
+        {
+            "status": "failed",
+            "message": message,
+            "errors": errors,
+            "failedAt": now_ms(),
+        },
+    ) or {**job, "status": "failed", "message": message, "errors": errors}
 
 
 def _invoke_content_job_async(job_id: str) -> None:
@@ -427,6 +451,7 @@ def _run_content_fetch_job(storage: RssStorage, job: dict[str, Any]) -> dict[str
     else:
         fetched = fetch_with_fallbacks(article["link"], settings, force_browser=_boolish(payload.get("forceBrowser")))
         content = fetched["content"]
+    content = normalize_article_text(content)
     errors = list(fetched.get("errors", []))
     formatting_attempted = should_format_content_with_ai(settings, payload)
     formatted = False
@@ -443,6 +468,7 @@ def _run_content_fetch_job(storage: RssStorage, job: dict[str, Any]) -> dict[str
         except Exception as exc:
             formatting_error = str(exc)
             errors.append(f"ai_format: {formatting_error}")
+    content = normalize_article_text(content)
     storage.save_article_content(article_id, content)
     updates = {
         "contentAiFormatted": formatted,

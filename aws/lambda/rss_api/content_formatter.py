@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from ai_client import generate_completion
+from content_sanitizer import normalize_article_text
 
 
 class ContentFormattingError(RuntimeError):
@@ -166,7 +167,7 @@ def _join_marker(marker: str, body: str) -> str:
 
 
 def _normalize_input(content: str) -> str:
-    return re.sub(r"\n{3,}", "\n\n", content.replace("\r\n", "\n").replace("\r", "\n")).strip()
+    return normalize_article_text(content)
 
 
 def _split_for_llm(content: str, *, max_chars: int, max_chunks: int) -> tuple[list[str], str]:
@@ -222,12 +223,12 @@ def _clean_model_output(content: str) -> str:
     text = re.sub(r"^```(?:markdown|md|text)?\s*", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\s*```$", "", text)
     text = re.sub(r"(?i)^here(?:'s| is) the formatted article:\s*", "", text).strip()
-    return re.sub(r"\n{3,}", "\n\n", text).strip()
+    return normalize_article_text(text)
 
 
 def _light_cleanup(content: str) -> str:
     lines = [line.rstrip() for line in content.replace("\r\n", "\n").replace("\r", "\n").splitlines()]
-    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+    return normalize_article_text("\n".join(lines))
 
 
 def _validate_not_summary(original: str, formatted: str) -> None:

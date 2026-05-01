@@ -10,10 +10,11 @@
   },
   "dependencies": {
     "@vitejs/plugin-vue": "latest",
+    "dompurify": "^3.4.2",
+    "marked": "^18.0.2",
     "typescript": "latest",
     "vite": "latest",
     "vue": "latest",
     "vue-tsc": "latest"
-  },
-  "devDependencies": {}
+  }
 }

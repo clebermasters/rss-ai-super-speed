@@ -32,6 +32,26 @@ class ContentFetcherTest(unittest.TestCase):
         self.assertIn("Fetched via browser automation", result["content"])
         wayback.assert_not_called()
 
+    def test_browser_result_is_sanitized_before_return(self) -> None:
+        noisy = (
+            'developer-blogs.nvidia.com/wp-content/uploads/2025/05/TensorRT-RTX-1024x576.png" '
+            'target="_blank" rel="noreferrer">Decorative image.\n\n'
+            'By [Homam Bahnassi](developer.nvidia.com/blog/author/hbahnassi/ "Posts by Homam Bahnassi")\n\n'
+            "Real article paragraph with useful details."
+        )
+        with patch.object(content_fetcher, "fetch_direct", side_effect=content_fetcher.ContentFetchError("blocked")), \
+            patch.object(content_fetcher, "fetch_browser", return_value=noisy), \
+            patch.object(content_fetcher, "fetch_wayback") as wayback:
+            result = content_fetcher.fetch_with_fallbacks("https://example.com")
+
+        self.assertEqual(result["strategy"], "browser")
+        self.assertIn("*[Fetched via browser automation]*", result["content"])
+        self.assertIn("Real article paragraph", result["content"])
+        self.assertNotIn("TensorRT-RTX-1024x576.png", result["content"])
+        self.assertNotIn("target=", result["content"])
+        self.assertNotIn("Posts by Homam", result["content"])
+        wayback.assert_not_called()
+
     def test_browser_failure_uses_wayback(self) -> None:
         with patch.object(content_fetcher, "fetch_direct", side_effect=content_fetcher.ContentFetchError("blocked")), \
             patch.object(content_fetcher, "fetch_browser", side_effect=content_fetcher.ContentFetchError("browser failed")), \

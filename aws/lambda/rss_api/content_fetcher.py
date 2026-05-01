@@ -11,6 +11,9 @@ from urllib.request import Request, urlopen
 import boto3
 import html2text
 from bs4 import BeautifulSoup
+from botocore.config import Config
+
+from content_sanitizer import normalize_article_text
 
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -31,6 +34,18 @@ BLOCKED_PATTERNS = [
 
 class ContentFetchError(RuntimeError):
     pass
+
+
+def _browser_lambda_client():
+    read_timeout = int(os.environ.get("BROWSER_FETCHER_INVOKE_TIMEOUT", "145"))
+    return boto3.client(
+        "lambda",
+        config=Config(
+            connect_timeout=5,
+            read_timeout=read_timeout,
+            retries={"max_attempts": 1},
+        ),
+    )
 
 
 def is_blocked(text: str) -> bool:
@@ -59,10 +74,11 @@ def html_to_markdown(html: str) -> str:
     root = soup.find("article") or soup.find("main") or soup.body or soup
     converter = html2text.HTML2Text()
     converter.ignore_links = False
+    converter.ignore_images = True
     converter.body_width = 0
     markdown = converter.handle(str(root))
     markdown = re.sub(r"\n{3,}", "\n\n", markdown).strip()
-    return markdown
+    return normalize_article_text(markdown)
 
 
 def fetch_direct(url: str) -> str:
@@ -92,7 +108,7 @@ def fetch_browser(url: str, settings: dict[str, Any] | None = None) -> str:
     if not function_name or not enabled_by_env or not enabled_by_settings:
         raise ContentFetchError("browser bypass disabled")
     payload = {"url": url, "requestId": str(uuid.uuid4())}
-    response = boto3.client("lambda").invoke(
+    response = _browser_lambda_client().invoke(
         FunctionName=function_name,
         InvocationType="RequestResponse",
         Payload=json.dumps(payload).encode("utf-8"),
@@ -102,12 +118,12 @@ def fetch_browser(url: str, settings: dict[str, Any] | None = None) -> str:
     if result.get("error"):
         raise ContentFetchError(result["error"])
     if result.get("content"):
-        return result["content"]
+        return normalize_article_text(result["content"])
     if result.get("s3Key"):
         bucket = os.environ["APP_BUCKET"]
         obj = boto3.client("s3").get_object(Bucket=bucket, Key=result["s3Key"])
         body = json.loads(obj["Body"].read().decode("utf-8"))
-        return body.get("content") or ""
+        return normalize_article_text(body.get("content") or "")
     raise ContentFetchError("browser bypass returned no content")
 
 
@@ -123,7 +139,7 @@ def fetch_wayback(url: str) -> str:
     markdown = html_to_markdown(html)
     if not markdown.strip():
         raise ContentFetchError("Wayback snapshot had no usable content")
-    return f"*[Retrieved from Wayback Machine]*\n\n{markdown}"
+    return normalize_article_text(f"*[Retrieved from Wayback Machine]*\n\n{markdown}")
 
 
 def fetch_with_fallbacks(
@@ -144,6 +160,7 @@ def fetch_with_fallbacks(
         content = fetch_browser(url, settings)
         if not content.startswith("*[Fetched via browser automation]*"):
             content = f"*[Fetched via browser automation]*\n\n{content}"
+        content = normalize_article_text(content)
         return {"strategy": "browser", "content": content, "errors": errors}
     except Exception as exc:
         errors.append(f"browser: {exc}")

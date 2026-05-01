@@ -50,6 +50,22 @@ class FakeStorage:
         return job
 
 
+class FakeJobStorage:
+    def __init__(self, job: dict) -> None:
+        self.job = dict(job)
+        self.updates: list[dict] = []
+
+    def get_content_job(self, job_id: str) -> dict:
+        del job_id
+        return dict(self.job)
+
+    def update_content_job(self, job_id: str, updates: dict) -> dict:
+        del job_id
+        self.updates.append(dict(updates))
+        self.job.update(updates)
+        return dict(self.job)
+
+
 class FetchJobRoutingTest(unittest.TestCase):
     def test_direct_success_completes_without_queue(self) -> None:
         storage = FakeStorage()
@@ -158,7 +174,7 @@ class FetchJobRoutingTest(unittest.TestCase):
         with patch.object(app, "fetch_with_fallbacks", return_value={"strategy": "direct", "content": "raw article text " * 200, "errors": []}), \
             patch.object(app, "format_article_content_for_mobile", side_effect=RuntimeError("provider unavailable")):
             result = app._run_content_fetch_job(storage, job)
-        self.assertEqual(storage.saved_content, "raw article text " * 200)
+        self.assertEqual(storage.saved_content, ("raw article text " * 200).strip())
         self.assertFalse(storage.article_updates[-1]["contentAiFormatted"])
         self.assertFalse(result["contentAiFormatted"])
         self.assertTrue(result["contentFormattingAttempted"])
@@ -178,6 +194,48 @@ class FetchJobRoutingTest(unittest.TestCase):
         self.assertEqual(result["strategy"], "existing")
         self.assertTrue(result["contentAiFormatted"])
         self.assertEqual(storage.saved_content, "## Formatted\n\nExisting article text")
+
+
+class ContentJobStatusTest(unittest.TestCase):
+    def test_get_content_job_marks_stale_running_job_failed(self) -> None:
+        stale_updated_at = app.now_ms() - 421_000
+        storage = FakeJobStorage(
+            {
+                "jobId": "job-1",
+                "articleId": "article-1",
+                "status": "running",
+                "message": "Fetching full article content",
+                "errors": [],
+                "updatedAt": stale_updated_at,
+                "createdAt": stale_updated_at,
+                "options": {},
+            }
+        )
+        with patch.dict(app.os.environ, {"CONTENT_JOB_STALE_SECONDS": "420"}):
+            body = app.handle_get_content_job(storage, "job-1")
+
+        self.assertEqual(body["status"], "failed")
+        self.assertIn("backend timeout", body["message"])
+        self.assertEqual(storage.updates[-1]["status"], "failed")
+
+    def test_get_content_job_keeps_recent_running_job_active(self) -> None:
+        storage = FakeJobStorage(
+            {
+                "jobId": "job-1",
+                "articleId": "article-1",
+                "status": "running",
+                "message": "Fetching full article content",
+                "errors": [],
+                "updatedAt": app.now_ms(),
+                "createdAt": app.now_ms(),
+                "options": {},
+            }
+        )
+        with patch.dict(app.os.environ, {"CONTENT_JOB_STALE_SECONDS": "420"}):
+            body = app.handle_get_content_job(storage, "job-1")
+
+        self.assertEqual(body["status"], "running")
+        self.assertEqual(storage.updates, [])
 
 
 if __name__ == "__main__":

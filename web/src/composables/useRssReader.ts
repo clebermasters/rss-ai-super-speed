@@ -9,6 +9,7 @@ type Notice = { kind: 'info' | 'success' | 'error'; message: string };
 
 const INITIAL_CONFIG: RuntimeConfig = { apiBaseUrl: '', apiToken: '', defaultTheme: 'warm' };
 const DEFAULT_SEGMENT_PERCENT = 30;
+const CONTENT_JOB_TIMEOUT_MS = 360_000;
 
 export function defaultSettings(): Settings {
   return {
@@ -327,8 +328,11 @@ export function useRssReader() {
   }
 
   async function pollContentJob(jobId: string): Promise<{ status: string; article?: Article | null; message?: string | null; errors?: string[] }> {
-    for (let attempt = 0; attempt < 70; attempt += 1) {
-      await delay(attempt < 2 ? 900 : 1500);
+    const startedAt = Date.now();
+    let attempt = 0;
+    while (Date.now() - startedAt < CONTENT_JOB_TIMEOUT_MS) {
+      await delay(attempt < 2 ? 900 : 2000);
+      attempt += 1;
       const result = await client().contentJob(jobId);
       if (result.status === 'completed') return result;
       if (result.status === 'failed') {
@@ -336,7 +340,7 @@ export function useRssReader() {
       }
       notice.value = { kind: 'info', message: result.message || `Content job ${result.status}...` };
     }
-    throw new Error('Content job timed out in the browser. It may still finish in the backend.');
+    throw new Error('Content job is taking longer than expected. Leave this article open and try Fetch Full again in a moment; the backend may still finish and cache the result.');
   }
 
   function replaceArticle(article: Article): void {

@@ -80,6 +80,9 @@ def html_to_markdown(html: str) -> str:
     root = soup.find("article") or soup.find("main") or soup.body or soup
     converter = html2text.HTML2Text()
     converter.ignore_links = False
+    converter.ignore_images = True
     converter.body_width = 0
     markdown = converter.handle(str(root))
-    return re.sub(r"\n{3,}", "\n\n", markdown).strip()
+    markdown = re.sub(r"(?im)^!\[[^\]]*]\([^)]+\)\s*$", "", markdown)
+    markdown = re.sub(r"\n{3,}", "\n\n", markdown).strip()
+    return markdown

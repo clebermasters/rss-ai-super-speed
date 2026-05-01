@@ -37,6 +37,7 @@ resource "aws_lambda_function" "api" {
       BROWSER_RESULT_INLINE_MAX      = "180000"
       CONTENT_JOB_STALE_SECONDS      = "420"
       DEFAULT_REFRESH_LIMIT          = "20"
+      RSS_AI_LOG_LEVEL               = "INFO"
     }
   }
 

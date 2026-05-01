@@ -129,6 +129,7 @@ fun SettingsDialog(
     var scheduledAiPrefetchRetryMinutes by remember { mutableStateOf(settings.scheduledAiPrefetchRetryMinutes.toString()) }
     var scheduledAiPrefetchSummaries by remember { mutableStateOf(settings.scheduledAiPrefetchSummaries) }
     var scheduledAiPrefetchContent by remember { mutableStateOf(settings.scheduledAiPrefetchContent) }
+    var articleContentCacheTtlDays by remember { mutableStateOf(settings.articleContentCacheTtlDays.toString()) }
 
     fun prefetchTags(): List<String> = normalizeTags(listOf(scheduledAiPrefetchTags))
 
@@ -169,6 +170,7 @@ fun SettingsDialog(
                             scheduledAiPrefetchRetryMinutes = scheduledAiPrefetchRetryMinutes.toIntOrNull()?.coerceIn(5, 1440) ?: 60,
                             scheduledAiPrefetchSummaries = scheduledAiPrefetchSummaries,
                             scheduledAiPrefetchContent = scheduledAiPrefetchContent,
+                            articleContentCacheTtlDays = articleContentCacheTtlDays.toIntOrNull()?.coerceIn(1, 365) ?: 30,
                         ),
                     )
                 },
@@ -265,6 +267,13 @@ fun SettingsDialog(
                     Checkbox(scheduledAiPrefetchSummaries, { scheduledAiPrefetchSummaries = it })
                     Text("Generate AI summaries")
                 }
+                OutlinedTextField(
+                    value = articleContentCacheTtlDays,
+                    onValueChange = { articleContentCacheTtlDays = it },
+                    label = { Text("DynamoDB article content cache TTL days") },
+                    supportingText = { Text("Full fetched/formatted content chunks expire through DynamoDB TTL. Applies at runtime after saving settings.") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 providers.forEach {
                     Text("${it.id}: ${if (it.configured) "configured" else "not configured"}", style = MaterialTheme.typography.bodySmall)
                 }

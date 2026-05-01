@@ -19,6 +19,7 @@ resource "aws_lambda_function" "browser_fetcher" {
       APP_BUCKET                = aws_s3_bucket.private.bucket
       BROWSER_RESULT_INLINE_MAX = "180000"
       PLAYWRIGHT_BROWSERS_PATH  = "/ms-playwright"
+      RSS_AI_LOG_LEVEL          = "INFO"
     }
   }
 

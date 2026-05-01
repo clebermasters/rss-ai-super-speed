@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import sys
+import time
 import unittest
 from pathlib import Path
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lambda" / "rss_api"))
 
-from storage import RssStorage, _normalize_tags  # noqa: E402
+from storage import RssStorage, _normalize_tags, content_cache_expired  # noqa: E402
 
 
 class FakeTable:
@@ -16,6 +17,37 @@ class FakeTable:
 
     def query(self, **_: object) -> dict:
         return {"Items": self.items}
+
+
+class ContentCacheFakeTable:
+    def __init__(self) -> None:
+        self.items: dict[tuple[str, str], dict] = {
+            ("USER#default", "ARTICLE#a1"): {
+                "pk": "USER#default",
+                "sk": "ARTICLE#a1",
+                "articleId": "a1",
+                "contentChunkCount": 0,
+            }
+        }
+
+    def get_item(self, Key: dict) -> dict:
+        item = self.items.get((Key["pk"], Key["sk"]))
+        return {"Item": dict(item)} if item else {}
+
+    def put_item(self, Item: dict, **_: object) -> None:
+        self.items[(Item["pk"], Item["sk"])] = dict(Item)
+
+    def delete_item(self, Key: dict) -> None:
+        self.items.pop((Key["pk"], Key["sk"]), None)
+
+    def query(self, **_: object) -> dict:
+        return {
+            "Items": [
+                dict(item)
+                for (_, sk), item in self.items.items()
+                if sk.startswith("CONTENT#")
+            ]
+        }
 
 
 class PaginatedFakeTable:
@@ -146,6 +178,55 @@ class StorageFeedCountsTest(unittest.TestCase):
         self.assertTrue(storage._article_matches(article, {"tags": ["ai", "papers"]}))
         self.assertTrue(storage._article_matches(article, {"tags": "ml, machine learning"}))
         self.assertFalse(storage._article_matches(article, {"tags": ["security", "ops"]}))
+
+    def test_save_article_content_adds_dynamodb_ttl_to_chunks_and_metadata(self) -> None:
+        storage = RssStorage.__new__(RssStorage)
+        storage.table = ContentCacheFakeTable()
+
+        storage.save_article_content("a1", "Readable cached content", content_ttl_days=2)
+
+        content_item = storage.table.items[("USER#default", "CONTENT#a1#00000")]
+        article_item = storage.table.items[("USER#default", "ARTICLE#a1")]
+        self.assertGreaterEqual(content_item["expiresAt"], int(time.time()) + (2 * 24 * 60 * 60) - 5)
+        self.assertEqual(article_item["contentExpiresAt"], content_item["expiresAt"])
+        self.assertEqual(article_item["articleContentCacheTtlDays"], 2)
+        self.assertEqual(storage.get_article_content("a1"), "Readable cached content")
+
+    def test_get_article_content_returns_empty_when_metadata_cache_is_expired(self) -> None:
+        storage = RssStorage.__new__(RssStorage)
+        storage.table = ContentCacheFakeTable()
+        storage.save_article_content("a1", "Old cached content", content_ttl_days=1)
+        storage.table.items[("USER#default", "ARTICLE#a1")]["contentExpiresAt"] = int(time.time()) - 1
+
+        self.assertTrue(content_cache_expired(storage.get_article("a1")))
+        self.assertEqual(storage.get_article_content("a1"), "")
+
+    def test_refresh_content_cache_ttl_rewrites_existing_content_chunks(self) -> None:
+        storage = RssStorage.__new__(RssStorage)
+        storage.table = ContentCacheFakeTable()
+        storage.save_article_content("a1", "Cached content", content_ttl_days=1)
+
+        result = storage.refresh_content_cache_ttl(14)
+
+        content_item = storage.table.items[("USER#default", "CONTENT#a1#00000")]
+        article_item = storage.table.items[("USER#default", "ARTICLE#a1")]
+        self.assertEqual(result, {"chunks": 1, "articles": 1})
+        self.assertGreaterEqual(content_item["expiresAt"], int(time.time()) + (14 * 24 * 60 * 60) - 5)
+        self.assertEqual(article_item["contentExpiresAt"], content_item["expiresAt"])
+        self.assertEqual(article_item["articleContentCacheTtlDays"], 14)
+
+    def test_update_settings_applies_new_ttl_to_existing_content_cache(self) -> None:
+        storage = RssStorage.__new__(RssStorage)
+        storage.table = ContentCacheFakeTable()
+        storage.save_article_content("a1", "Cached content", content_ttl_days=1)
+
+        updated = storage.update_settings({"articleContentCacheTtlDays": 21})
+
+        content_item = storage.table.items[("USER#default", "CONTENT#a1#00000")]
+        article_item = storage.table.items[("USER#default", "ARTICLE#a1")]
+        self.assertEqual(updated["articleContentCacheTtlDays"], 21)
+        self.assertGreaterEqual(content_item["expiresAt"], int(time.time()) + (21 * 24 * 60 * 60) - 5)
+        self.assertEqual(article_item["contentExpiresAt"], content_item["expiresAt"])
 
 
 if __name__ == "__main__":

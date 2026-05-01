@@ -136,6 +136,30 @@ class ScheduledPrefetchTest(unittest.TestCase):
         self.assertEqual(result["skipped"][0]["reason"], "recently queued")
         invoke.assert_not_called()
 
+    def test_expired_content_cache_is_prefetched_again(self) -> None:
+        settings = {
+            "scheduledAiPrefetchEnabled": True,
+            "scheduledAiPrefetchTags": ["ai"],
+            "scheduledAiPrefetchRetryMinutes": 60,
+        }
+        article = {
+            "articleId": "article-1",
+            "link": "https://example.com/1",
+            "tags": ["ai"],
+            "contentChunkCount": 1,
+            "contentAiFormatted": True,
+            "contentExpiresAt": 1,
+        }
+        storage = SchedulerStorage(settings, [{"feedId": "feed-ai", "enabled": True, "tags": ["ai"]}], [article])
+
+        with patch.object(app, "refresh_feeds", return_value={"fetched": 0, "saved": 0, "errors": []}), \
+            patch.object(app, "_invoke_content_job_async") as invoke:
+            result = app.handle_scheduled_ai_prefetch(storage, settings)
+
+        self.assertEqual(result["queued"][0]["articleId"], "article-1")
+        self.assertTrue(storage.jobs[-1]["options"]["formatWithAi"])
+        invoke.assert_called_once_with("job-1")
+
     def test_prefetch_content_job_formats_summarizes_and_keeps_unread(self) -> None:
         settings = {"aiContentFormattingEnabled": False, "browserBypassEnabled": True, "browserBypassMode": "on_blocked"}
         article = {"articleId": "article-1", "link": "https://example.com/1", "tags": ["ai"], "isRead": False}

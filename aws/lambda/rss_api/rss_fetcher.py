@@ -80,22 +80,60 @@ def fetch_feed(feed: dict[str, Any]) -> list[dict[str, Any]]:
     return articles
 
 
-def fetch_feeds(feeds: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def fetch_feeds_detailed(feeds: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     articles: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
+    feed_results: list[dict[str, Any]] = []
     for feed in feeds:
         if not feed.get("enabled", True):
+            feed_results.append(
+                {
+                    "feedId": feed.get("feedId"),
+                    "name": feed.get("name"),
+                    "enabled": False,
+                    "fetched": 0,
+                    "status": "skipped",
+                }
+            )
             continue
         try:
-            articles.extend(fetch_feed(feed))
+            feed_articles = fetch_feed(feed)
+            articles.extend(feed_articles)
+            feed_results.append(
+                {
+                    "feedId": feed.get("feedId"),
+                    "name": feed.get("name"),
+                    "enabled": True,
+                    "limit": int(feed.get("limit") or 20),
+                    "fetched": len(feed_articles),
+                    "status": "ok",
+                }
+            )
         except Exception as exc:
+            error = str(exc)
             errors.append(
                 {
                     "feedId": feed.get("feedId"),
                     "name": feed.get("name"),
                     "url": feed.get("url"),
-                    "error": str(exc),
+                    "error": error,
+                }
+            )
+            feed_results.append(
+                {
+                    "feedId": feed.get("feedId"),
+                    "name": feed.get("name"),
+                    "enabled": True,
+                    "limit": int(feed.get("limit") or 20),
+                    "fetched": 0,
+                    "status": "error",
+                    "error": error,
                 }
             )
     articles.sort(key=lambda item: int(item.get("publishedEpoch") or 0), reverse=True)
+    return articles, errors, feed_results
+
+
+def fetch_feeds(feeds: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    articles, errors, _feed_results = fetch_feeds_detailed(feeds)
     return articles, errors

@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import ArticleList from './components/ArticleList.vue';
+import ConfigurationPage from './components/ConfigurationPage.vue';
 import FeedRail from './components/FeedRail.vue';
 import InfiniteArticleFlow from './components/InfiniteArticleFlow.vue';
 import ReaderPane from './components/ReaderPane.vue';
 import RsvpReader from './components/RsvpReader.vue';
-import SettingsModal from './components/SettingsModal.vue';
 import StatusToast from './components/StatusToast.vue';
 import TagEditorModal from './components/TagEditorModal.vue';
 import TagFilterBar from './components/TagFilterBar.vue';
@@ -102,14 +102,25 @@ function saveTags(tags: string[]): void {
       @settings="reader.showSettings.value = true"
     />
 
+    <ConfigurationPage
+      v-if="reader.showSettings.value"
+      :available-tags="reader.availableTags.value.map((tag) => tag.tag)"
+      :config="reader.config.value"
+      :configured="reader.configured.value"
+      :settings="reader.activeSettings.value"
+      @close="reader.showSettings.value = false"
+      @save="reader.saveConfig"
+    />
+
     <TagFilterBar
+      v-else
       :selected-tag="reader.selectedTag.value"
       :tags="reader.availableTags.value"
       @select="reader.setTag"
     />
 
     <InfiniteArticleFlow
-      v-if="flowMode"
+      v-if="!reader.showSettings.value && flowMode"
       :articles="reader.articles.value"
       :brand-new-article-ids="reader.brandNewArticleIds.value"
       :loading="reader.loading.value"
@@ -121,7 +132,7 @@ function saveTags(tags: string[]): void {
     />
 
     <section
-      v-else
+      v-else-if="!reader.showSettings.value"
       class="dashboard"
       :class="{ 'feed-collapsed': feedRailCollapsed, 'list-collapsed': articleListCollapsed, 'reader-fullscreen': readerFullscreen }"
     >
@@ -176,15 +187,6 @@ function saveTags(tags: string[]): void {
         @toggle-save="reader.toggleSaved"
       />
     </section>
-
-    <SettingsModal
-      :available-tags="reader.availableTags.value.map((tag) => tag.tag)"
-      :config="reader.config.value"
-      :open="reader.showSettings.value"
-      :settings="reader.activeSettings.value"
-      @close="reader.showSettings.value = false"
-      @save="reader.saveConfig"
-    />
 
     <RsvpReader
       :article="reader.selectedArticle.value"

@@ -15,34 +15,53 @@ from content_formatter import format_article_content_for_mobile, should_format_c
 from content_fetcher import fetch_direct, fetch_with_fallbacks
 from content_sanitizer import normalize_article_text
 from formatters import format_articles
-from rss_fetcher import fetch_feeds
-from storage import RssStorage, now_ms
+from rss_fetcher import fetch_feeds_detailed
+from storage import RssStorage, content_cache_expired, now_ms
 from tts_client import prepare_tts_input, synthesize_speech, tts_cache_key
 
 
 def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
+    request_started_at = time.monotonic()
     if event.get("source") == "rss-ai.scheduler":
+        _log_event("scheduler_invocation_received", source=event.get("source"), action=event.get("action"))
         return _handle_scheduled_refresh()
     if event.get("source") == "rss-ai.content-fetch-job":
+        _log_event("content_job_invocation_received", jobId=event.get("jobId"))
         return _handle_content_fetch_job(event)
     if event.get("source") == "rss-ai.tts-job":
+        _log_event("tts_job_invocation_received", jobId=event.get("jobId"))
         return _handle_tts_job(event)
 
     method = event.get("requestContext", {}).get("http", {}).get("method", "GET").upper()
     path = event.get("rawPath", "/")
+    _log_event("api_request_started", method=method, path=path)
 
     if method == "OPTIONS":
-        return response(204, "")
+        result = response(204, "")
+        _log_event("api_request_completed", method=method, path=path, statusCode=204, durationMs=_elapsed_ms(request_started_at))
+        return result
     if not _authorized(event):
+        _log_event("api_request_unauthorized", method=method, path=path, durationMs=_elapsed_ms(request_started_at), level="WARNING")
         return response(401, {"error": "Unauthorized"})
 
     try:
-        return route(method, path, event)
+        result = route(method, path, event)
+        _log_event(
+            "api_request_completed",
+            method=method,
+            path=path,
+            statusCode=result.get("statusCode"),
+            durationMs=_elapsed_ms(request_started_at),
+        )
+        return result
     except ValueError as exc:
+        _log_event("api_request_failed", method=method, path=path, statusCode=400, error=str(exc), durationMs=_elapsed_ms(request_started_at), level="WARNING")
         return response(400, {"error": str(exc)})
     except RuntimeError as exc:
+        _log_event("api_request_failed", method=method, path=path, statusCode=502, error=_client_safe_error(exc, "Backend provider error"), durationMs=_elapsed_ms(request_started_at), level="ERROR")
         return response(502, {"error": _client_safe_error(exc, "Backend provider error")})
     except Exception as exc:
+        _log_event("api_request_failed", method=method, path=path, statusCode=500, error=_client_safe_error(exc, "Unhandled server error"), durationMs=_elapsed_ms(request_started_at), level="ERROR")
         return response(500, {"error": _client_safe_error(exc, "Unhandled server error")})
 
 
@@ -234,14 +253,42 @@ def route(method: str, path: str, event: dict[str, Any]) -> dict[str, Any]:
 
 
 def refresh_feeds(storage: RssStorage, feeds: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    started_at = time.monotonic()
     storage.bootstrap_defaults()
     feeds = feeds or storage.list_feeds()
-    articles, errors = fetch_feeds(feeds)
+    _log_event(
+        "feed_refresh_started",
+        feedCount=len(feeds),
+        feedIds=[feed.get("feedId") for feed in feeds],
+        tagSets=[feed.get("tags") or [] for feed in feeds],
+    )
+    articles, errors, feed_results = fetch_feeds_detailed(feeds)
+    for feed_result in feed_results:
+        _log_event(
+            "feed_refresh_feed_result",
+            feedId=feed_result.get("feedId"),
+            name=feed_result.get("name"),
+            status=feed_result.get("status"),
+            fetched=feed_result.get("fetched", 0),
+            limit=feed_result.get("limit"),
+            error=feed_result.get("error"),
+            level="ERROR" if feed_result.get("status") == "error" else "INFO",
+        )
     saved = storage.save_articles(articles)
     for feed in feeds:
         status = "error" if any(err.get("feedId") == feed.get("feedId") for err in errors) else "ok"
         storage.update_feed(feed["feedId"], {"lastFetchedAt": now_ms(), "lastFetchStatus": status})
-    return {"fetched": len(articles), "saved": saved, "errors": errors}
+    result = {"fetched": len(articles), "saved": saved, "errors": errors}
+    _log_event(
+        "feed_refresh_completed",
+        feedCount=len(feeds),
+        fetched=len(articles),
+        savedNew=saved,
+        errorCount=len(errors),
+        durationMs=_elapsed_ms(started_at),
+        feedResults=feed_results,
+    )
+    return result
 
 
 def handle_sync_push(storage: RssStorage, payload: dict[str, Any]) -> dict[str, Any]:
@@ -260,12 +307,22 @@ def handle_fetch_content(storage: RssStorage, article_id: str, payload: dict[str
     article = storage.get_article(article_id)
     if not article:
         return 404, {"error": "Article not found"}
+    started_at = time.monotonic()
     settings = storage.get_settings()
     direct_errors: list[str] = []
     force_browser = _boolish(payload.get("forceBrowser"))
     mark_read = _should_mark_read(payload)
     format_with_ai = should_format_content_with_ai(settings, payload)
     browser_mode = str(settings.get("browserBypassMode") or "on_blocked")
+    _log_event(
+        "fetch_content_request_started",
+        articleId=article_id,
+        sourceFeedId=article.get("sourceFeedId"),
+        forceBrowser=force_browser,
+        markRead=mark_read,
+        formatWithAi=format_with_ai,
+        browserMode=browser_mode,
+    )
     if not force_browser and browser_mode != "always" and not format_with_ai:
         try:
             content = fetch_direct(article["link"])
@@ -274,6 +331,13 @@ def handle_fetch_content(storage: RssStorage, article_id: str, payload: dict[str
             if mark_read:
                 updates["isRead"] = True
             storage.update_article(article_id, updates)
+            _log_event(
+                "fetch_content_direct_completed",
+                articleId=article_id,
+                contentChars=len(content),
+                markRead=mark_read,
+                durationMs=_elapsed_ms(started_at),
+            )
             return 200, {
                 "articleId": article_id,
                 "status": "completed",
@@ -286,12 +350,23 @@ def handle_fetch_content(storage: RssStorage, article_id: str, payload: dict[str
             }
         except Exception as exc:
             direct_errors.append(f"direct: {exc}")
+            _log_event("fetch_content_direct_failed", articleId=article_id, error=str(exc), level="WARNING")
 
     job_options = dict(payload)
     job_options["formatWithAi"] = format_with_ai
     job_options["markRead"] = mark_read
     job = storage.create_content_job(article_id, article["link"], job_options, direct_errors)
     _invoke_content_job_async(job["jobId"])
+    _log_event(
+        "fetch_content_job_queued",
+        articleId=article_id,
+        jobId=job.get("jobId"),
+        formatWithAi=format_with_ai,
+        forceBrowser=force_browser,
+        markRead=mark_read,
+        directErrorCount=len(direct_errors),
+        durationMs=_elapsed_ms(started_at),
+    )
     return 202, {
         "articleId": article_id,
         "jobId": job["jobId"],
@@ -319,6 +394,12 @@ def handle_format_existing_content(storage: RssStorage, article_id: str, payload
     job_options["markRead"] = _should_mark_read(payload)
     job = storage.create_content_job(article_id, article["link"], job_options, [])
     _invoke_content_job_async(job["jobId"])
+    _log_event(
+        "format_existing_content_job_queued",
+        articleId=article_id,
+        jobId=job.get("jobId"),
+        markRead=job_options["markRead"],
+    )
     return 202, {
         "articleId": article_id,
         "jobId": job["jobId"],
@@ -391,15 +472,27 @@ def _invoke_content_job_async(job_id: str) -> None:
         InvocationType="Event",
         Payload=json.dumps({"source": "rss-ai.content-fetch-job", "jobId": job_id}).encode("utf-8"),
     )
+    _log_event("content_job_async_invoked", jobId=job_id)
 
 
 def _handle_content_fetch_job(event: dict[str, Any]) -> dict[str, Any]:
+    started_at = time.monotonic()
     storage = RssStorage()
     job_id = str(event.get("jobId") or "")
     job = storage.get_content_job(job_id)
     if not job:
+        _log_event("content_job_missing", jobId=job_id, level="WARNING")
         return {"ok": False, "error": "job not found", "jobId": job_id}
     running_message = "Formatting existing article content" if (job.get("options") or {}).get("formatExistingOnly") else "Fetching full article content"
+    _log_event(
+        "content_job_started",
+        jobId=job_id,
+        articleId=job.get("articleId"),
+        prefetch=bool((job.get("options") or {}).get("prefetch")),
+        formatWithAi=bool((job.get("options") or {}).get("formatWithAi")),
+        summarizeWithAi=bool((job.get("options") or {}).get("summarizeWithAi")),
+        formatExistingOnly=bool((job.get("options") or {}).get("formatExistingOnly")),
+    )
     storage.update_content_job(job_id, {"status": "running", "message": running_message})
     try:
         result = _run_content_fetch_job(storage, job)
@@ -415,6 +508,20 @@ def _handle_content_fetch_job(event: dict[str, Any]) -> dict[str, Any]:
                 "message": _content_job_success_message(result),
                 "completedAt": now_ms(),
             },
+        )
+        _log_event(
+            "content_job_completed",
+            jobId=job_id,
+            articleId=job.get("articleId"),
+            strategy=result.get("strategy"),
+            contentChars=len(str(result.get("content") or "")),
+            contentFormattingAttempted=bool(result.get("contentFormattingAttempted", False)),
+            contentAiFormatted=bool(result.get("contentAiFormatted", False)),
+            contentFormattingError=result.get("contentFormattingError"),
+            summaryGenerated=bool(result.get("summaryGenerated", False)),
+            summaryError=result.get("summaryError"),
+            errorCount=len(result.get("errors") or []),
+            durationMs=_elapsed_ms(started_at),
         )
         return {"ok": True, "jobId": job_id, "strategy": result.get("strategy")}
     except Exception as exc:
@@ -436,6 +543,15 @@ def _handle_content_fetch_job(event: dict[str, Any]) -> dict[str, Any]:
                     "prefetchProcessedAt": now_ms(),
                 },
             )
+        _log_event(
+            "content_job_failed",
+            jobId=job_id,
+            articleId=job.get("articleId"),
+            prefetch=bool((job.get("options") or {}).get("prefetch")),
+            error=str(exc),
+            durationMs=_elapsed_ms(started_at),
+            level="ERROR",
+        )
         return {"ok": False, "jobId": job_id, "error": str(exc)}
 
 
@@ -455,6 +571,7 @@ def _content_job_success_message(result: dict[str, Any]) -> str:
 
 
 def _run_content_fetch_job(storage: RssStorage, job: dict[str, Any]) -> dict[str, Any]:
+    started_at = time.monotonic()
     article_id = str(job["articleId"])
     payload = job.get("options") or {}
     article = storage.get_article(article_id, include_content=bool(payload.get("formatExistingOnly")))
@@ -466,9 +583,17 @@ def _run_content_fetch_job(storage: RssStorage, job: dict[str, Any]) -> dict[str
         if not content:
             raise RuntimeError("No article content available to format. Fetch full content first.")
         fetched = {"strategy": "existing", "errors": []}
+        _log_event("content_job_existing_content_loaded", articleId=article_id, contentChars=len(content))
     else:
         fetched = fetch_with_fallbacks(article["link"], settings, force_browser=_boolish(payload.get("forceBrowser")))
         content = fetched["content"]
+        _log_event(
+            "content_job_fetch_strategy_completed",
+            articleId=article_id,
+            strategy=fetched.get("strategy"),
+            contentChars=len(str(content or "")),
+            errorCount=len(fetched.get("errors") or []),
+        )
     content = normalize_article_text(content)
     errors = list(fetched.get("errors", []))
     formatting_attempted = should_format_content_with_ai(settings, payload)
@@ -476,6 +601,7 @@ def _run_content_fetch_job(storage: RssStorage, job: dict[str, Any]) -> dict[str
     formatting_error = None
     if formatting_attempted:
         try:
+            before_chars = len(content)
             content = format_article_content_for_mobile(
                 content,
                 article=article,
@@ -483,9 +609,16 @@ def _run_content_fetch_job(storage: RssStorage, job: dict[str, Any]) -> dict[str
                 overrides=payload,
             )
             formatted = True
+            _log_event(
+                "content_job_ai_format_completed",
+                articleId=article_id,
+                inputChars=before_chars,
+                outputChars=len(content),
+            )
         except Exception as exc:
             formatting_error = str(exc)
             errors.append(f"ai_format: {formatting_error}")
+            _log_event("content_job_ai_format_failed", articleId=article_id, error=formatting_error, level="ERROR")
     content = normalize_article_text(content)
     storage.save_article_content(article_id, content)
     summary_generated = False
@@ -497,6 +630,7 @@ def _run_content_fetch_job(storage: RssStorage, job: dict[str, Any]) -> dict[str
     if _boolish(payload.get("summarizeWithAi")):
         try:
             if _boolish(payload.get("forceSummary")) or not article.get("summaryGeneratedAt"):
+                summary_started_at = time.monotonic()
                 summary_article = {
                     **article,
                     "content": content,
@@ -505,9 +639,18 @@ def _run_content_fetch_job(storage: RssStorage, job: dict[str, Any]) -> dict[str
                 updates["summary"] = summarize_articles([summary_article], settings, payload)
                 updates["summaryGeneratedAt"] = now_ms()
                 summary_generated = True
+                _log_event(
+                    "content_job_ai_summary_completed",
+                    articleId=article_id,
+                    summaryChars=len(str(updates["summary"] or "")),
+                    durationMs=_elapsed_ms(summary_started_at),
+                )
+            else:
+                _log_event("content_job_ai_summary_skipped", articleId=article_id, reason="summary already generated")
         except Exception as exc:
             summary_error = str(exc)
             errors.append(f"ai_summary: {summary_error}")
+            _log_event("content_job_ai_summary_failed", articleId=article_id, error=summary_error, level="ERROR")
     if _boolish(payload.get("prefetch")):
         updates["prefetchProcessedAt"] = now_ms()
         updates["prefetchStatus"] = "completed"
@@ -516,6 +659,16 @@ def _run_content_fetch_job(storage: RssStorage, job: dict[str, Any]) -> dict[str
     if _should_mark_read(payload):
         updates["isRead"] = True
     storage.update_article(article_id, updates)
+    _log_event(
+        "content_job_article_cache_saved",
+        articleId=article_id,
+        contentChars=len(content),
+        contentAiFormatted=formatted,
+        summaryGenerated=summary_generated,
+        prefetch=bool(payload.get("prefetch")),
+        markRead=_should_mark_read(payload),
+        durationMs=_elapsed_ms(started_at),
+    )
     return {
         "articleId": article_id,
         "strategy": fetched.get("strategy"),
@@ -827,20 +980,44 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
 
 
 def _handle_scheduled_refresh() -> dict[str, Any]:
+    started_at = time.monotonic()
     storage = RssStorage()
     settings = storage.get_settings()
+    _log_event(
+        "scheduler_settings_loaded",
+        scheduledAiPrefetchEnabled=bool(_boolish(settings.get("scheduledAiPrefetchEnabled"))),
+        scheduledRefreshEnabled=bool(_boolish(settings.get("scheduledRefreshEnabled"))),
+        scheduledAiPrefetchTagCount=len(_normalize_setting_tags(settings.get("scheduledAiPrefetchTags"))),
+    )
     if _boolish(settings.get("scheduledAiPrefetchEnabled")):
-        return {"ok": True, "prefetch": handle_scheduled_ai_prefetch(storage, settings)}
+        result = {"ok": True, "prefetch": handle_scheduled_ai_prefetch(storage, settings)}
+        _log_event("scheduler_invocation_completed", mode="ai_prefetch", durationMs=_elapsed_ms(started_at))
+        return result
     if _boolish(settings.get("scheduledRefreshEnabled")):
-        return {"ok": True, "result": refresh_feeds(storage)}
+        result = {"ok": True, "result": refresh_feeds(storage)}
+        _log_event("scheduler_invocation_completed", mode="refresh_only", durationMs=_elapsed_ms(started_at))
+        return result
+    _log_event("scheduler_invocation_skipped", reason="scheduled refresh and AI prefetch are disabled", durationMs=_elapsed_ms(started_at))
     return {"ok": True, "skipped": "scheduled refresh and AI prefetch are disabled"}
 
 
 def handle_scheduled_ai_prefetch(storage: RssStorage, settings: dict[str, Any] | None = None) -> dict[str, Any]:
+    started_at = time.monotonic()
     settings = settings or storage.get_settings()
     tags = _normalize_setting_tags(settings.get("scheduledAiPrefetchTags"))
+    _log_event(
+        "scheduled_prefetch_started",
+        tags=tags,
+        limit=_bounded_int(settings.get("scheduledAiPrefetchLimit"), 5, minimum=1, maximum=25),
+        maxAgeHours=_bounded_int(settings.get("scheduledAiPrefetchMaxAgeHours"), 24, minimum=1, maximum=168),
+        retryMinutes=_bounded_int(settings.get("scheduledAiPrefetchRetryMinutes"), 60, minimum=5, maximum=1440),
+        contentEnabled=_setting_enabled(settings, "scheduledAiPrefetchContent", True),
+        summariesEnabled=_setting_enabled(settings, "scheduledAiPrefetchSummaries", True),
+    )
     if not tags:
-        return {"enabled": False, "reason": "No scheduled AI prefetch tags configured", "tags": []}
+        result = {"enabled": False, "reason": "No scheduled AI prefetch tags configured", "tags": []}
+        _log_event("scheduled_prefetch_skipped", reason=result["reason"], durationMs=_elapsed_ms(started_at))
+        return result
 
     feeds = [
         feed
@@ -848,10 +1025,25 @@ def handle_scheduled_ai_prefetch(storage: RssStorage, settings: dict[str, Any] |
         if feed.get("enabled", True) and _tags_intersect(feed.get("tags"), tags)
     ]
     if not feeds:
-        return {"enabled": True, "reason": "No enabled feeds match scheduled AI prefetch tags", "tags": tags, "feeds": 0, "queued": []}
+        result = {"enabled": True, "reason": "No enabled feeds match scheduled AI prefetch tags", "tags": tags, "feeds": 0, "queued": []}
+        _log_event("scheduled_prefetch_skipped", reason=result["reason"], tags=tags, durationMs=_elapsed_ms(started_at))
+        return result
+
+    _log_event(
+        "scheduled_prefetch_matching_feeds",
+        tags=tags,
+        feedCount=len(feeds),
+        feedIds=[feed.get("feedId") for feed in feeds],
+    )
 
     refresh_result = refresh_feeds(storage, feeds)
     candidates = _scheduled_prefetch_candidates(storage, tags, settings)
+    _log_event(
+        "scheduled_prefetch_candidates_selected",
+        tags=tags,
+        candidateCount=len(candidates),
+        articleIds=[article.get("articleId") for article in candidates],
+    )
     queued: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
@@ -859,12 +1051,21 @@ def handle_scheduled_ai_prefetch(storage: RssStorage, settings: dict[str, Any] |
         work = _scheduled_prefetch_work(article, settings)
         if not work["needsContent"] and not work["needsSummary"]:
             skipped.append({"articleId": article.get("articleId"), "reason": "already cached"})
+            _log_event("scheduled_prefetch_article_skipped", articleId=article.get("articleId"), reason="already cached")
             continue
         if _prefetch_recently_queued(article, settings):
             skipped.append({"articleId": article.get("articleId"), "reason": "recently queued"})
+            _log_event("scheduled_prefetch_article_skipped", articleId=article.get("articleId"), reason="recently queued")
             continue
         try:
             job = _queue_prefetch_content_job(storage, article, work)
+            _log_event(
+                "scheduled_prefetch_article_queued",
+                articleId=article.get("articleId"),
+                jobId=job.get("jobId"),
+                needsContent=work["needsContent"],
+                needsSummary=work["needsSummary"],
+            )
             queued.append(
                 {
                     "articleId": article.get("articleId"),
@@ -885,7 +1086,8 @@ def handle_scheduled_ai_prefetch(storage: RssStorage, settings: dict[str, Any] |
                     },
                 )
             errors.append({"articleId": article_id, "error": str(exc)})
-    return {
+            _log_event("scheduled_prefetch_article_queue_failed", articleId=article_id, error=str(exc), level="ERROR")
+    result = {
         "enabled": True,
         "tags": tags,
         "feeds": len(feeds),
@@ -895,6 +1097,20 @@ def handle_scheduled_ai_prefetch(storage: RssStorage, settings: dict[str, Any] |
         "skipped": skipped,
         "errors": errors,
     }
+    _log_event(
+        "scheduled_prefetch_completed",
+        tags=tags,
+        feedCount=len(feeds),
+        fetched=refresh_result.get("fetched", 0),
+        savedNew=refresh_result.get("saved", 0),
+        refreshErrorCount=len(refresh_result.get("errors") or []),
+        candidateCount=len(candidates),
+        queuedCount=len(queued),
+        skippedCount=len(skipped),
+        errorCount=len(errors),
+        durationMs=_elapsed_ms(started_at),
+    )
+    return result
 
 
 def _scheduled_prefetch_candidates(storage: RssStorage, tags: list[str], settings: dict[str, Any]) -> list[dict[str, Any]]:
@@ -915,7 +1131,9 @@ def _scheduled_prefetch_work(article: dict[str, Any], settings: dict[str, Any]) 
     wants_content = _setting_enabled(settings, "scheduledAiPrefetchContent", True)
     wants_summary = _setting_enabled(settings, "scheduledAiPrefetchSummaries", True)
     needs_content = wants_content and (
-        int(article.get("contentChunkCount") or 0) <= 0 or not bool(article.get("contentAiFormatted", False))
+        int(article.get("contentChunkCount") or 0) <= 0
+        or content_cache_expired(article)
+        or not bool(article.get("contentAiFormatted", False))
     )
     needs_summary = wants_summary and not bool(article.get("summaryGeneratedAt"))
     return {
@@ -958,6 +1176,46 @@ def _prefetch_recently_queued(article: dict[str, Any], settings: dict[str, Any])
         return False
     retry_minutes = _bounded_int(settings.get("scheduledAiPrefetchRetryMinutes"), 60, minimum=5, maximum=1440)
     return now_ms() - queued_at < retry_minutes * 60 * 1000
+
+
+def _log_event(event: str, *, level: str = "INFO", **fields: Any) -> None:
+    if not _should_log(level):
+        return
+    payload = {
+        "level": level.upper(),
+        "event": event,
+        "service": "rss-api",
+        "timestampMs": now_ms(),
+    }
+    payload.update({key: _log_safe_value(value) for key, value in fields.items() if value is not None})
+    print(json.dumps(payload, default=str, sort_keys=True))
+
+
+def _should_log(level: str) -> bool:
+    order = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40}
+    configured = os.environ.get("RSS_AI_LOG_LEVEL", "INFO").upper()
+    return order.get(level.upper(), 20) >= order.get(configured, 20)
+
+
+def _log_safe_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _log_safe_value(item) for key, item in value.items() if _log_safe_key(str(key))}
+    if isinstance(value, list):
+        return [_log_safe_value(item) for item in value[:50]]
+    if isinstance(value, tuple):
+        return [_log_safe_value(item) for item in value[:50]]
+    if isinstance(value, str):
+        return value[:700]
+    return value
+
+
+def _log_safe_key(key: str) -> bool:
+    lowered = key.lower()
+    return not any(secret in lowered for secret in ("token", "secret", "password", "authorization", "apikey", "api_key"))
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return int((time.monotonic() - started_at) * 1000)
 
 
 def _normalize_setting_tags(value: Any) -> list[str]:

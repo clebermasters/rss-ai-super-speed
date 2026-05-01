@@ -18,13 +18,30 @@ export function defaultSettings(): Settings {
     aiApiBase: 'https://api.openai.com/v1',
     codexModel: 'gpt-5.4',
     codexReasoningEffort: 'medium',
+    codexClientVersion: '0.118.0',
+    embeddingProvider: 'openai_compatible',
     embeddingModel: 'text-embedding-3-small',
+    ttsApiBase: 'https://api.openai.com/v1',
     ttsModel: 'gpt-4o-mini-tts-2025-12-15',
     ttsVoice: 'marin',
     ttsInstructions: 'Read clearly with natural pacing for a personal news briefing.',
+    ttsMaxInputChars: 6000,
+    ttsResponseFormat: 'mp3',
+    ttsSegmentPercent: 100,
+    autoSummarize: false,
+    autoFetchContent: false,
     aiContentFormattingEnabled: false,
+    aiContentFormattingMinWords: 120,
+    aiContentFormattingChunkChars: 8500,
+    aiContentFormattingMaxChunks: 8,
+    aiContentFormattingMaxTokens: 6000,
+    aiContentFormattingTemperature: 0.1,
+    prefetchDistance: 3,
     browserBypassEnabled: true,
     browserBypassMode: 'on_blocked',
+    refreshOnOpen: true,
+    scheduledRefreshEnabled: false,
+    scheduledRefreshRate: 'rate(6 hours)',
     scheduledAiPrefetchEnabled: false,
     scheduledAiPrefetchTags: [],
     scheduledAiPrefetchLimit: 5,
@@ -32,6 +49,11 @@ export function defaultSettings(): Settings {
     scheduledAiPrefetchRetryMinutes: 60,
     scheduledAiPrefetchSummaries: true,
     scheduledAiPrefetchContent: true,
+    defaultArticleLimit: 50,
+    cleanupReadAfterDays: 30,
+    articleContentCacheTtlDays: 30,
+    semanticSearchEnabled: false,
+    exportDefaultFormat: 'markdown',
   };
 }
 
@@ -126,7 +148,7 @@ export function useRssReader() {
         tag: selectedTag.value || undefined,
         unread: filter.value === 'unread',
         saved: filter.value === 'saved',
-        limit: 200,
+        limit: boundedNumber(activeSettings.value.defaultArticleLimit, 50, 1, 1000),
       });
       articles.value = data.articles || [];
       brandNewArticleIds.value = detectBrandNewArticleIds(articles.value);
@@ -527,4 +549,10 @@ function normalizeTags(value: string | string[] | null | undefined): string[] {
     normalized.push(clean);
   }
   return normalized;
+}
+
+function boundedNumber(value: unknown, fallback: number, minimum: number, maximum: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(minimum, Math.min(maximum, Math.trunc(parsed)));
 }

@@ -14,6 +14,7 @@ from botocore.exceptions import ClientError
 
 USER_PK = "USER#default"
 ARTICLES_GSI_PK = "USER#default#ARTICLES"
+DEFAULT_ARTICLE_CONTENT_CACHE_TTL_DAYS = 30
 
 
 def now_ms() -> int:
@@ -55,6 +56,35 @@ def _normalize_tags(value: Any) -> list[str]:
     return normalized
 
 
+def _bounded_int(value: Any, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
+def content_cache_ttl_days(settings: dict[str, Any] | None = None) -> int:
+    settings = settings or {}
+    return _bounded_int(
+        settings.get("articleContentCacheTtlDays"),
+        DEFAULT_ARTICLE_CONTENT_CACHE_TTL_DAYS,
+        minimum=1,
+        maximum=365,
+    )
+
+
+def content_cache_expires_at(settings: dict[str, Any] | None = None) -> int:
+    return int(time.time()) + content_cache_ttl_days(settings) * 24 * 60 * 60
+
+
+def content_cache_expired(article: dict[str, Any] | None) -> bool:
+    if not article:
+        return False
+    expires_at = int(article.get("contentExpiresAt") or 0)
+    return bool(expires_at and expires_at <= int(time.time()))
+
+
 class RssStorage:
     def __init__(self, table_name: str | None = None, bucket_name: str | None = None) -> None:
         self.table_name = table_name or os.environ["TABLE_NAME"]
@@ -64,10 +94,14 @@ class RssStorage:
 
     def get_settings(self) -> dict[str, Any]:
         item = self.table.get_item(Key={"pk": USER_PK, "sk": "SETTINGS#app"}).get("Item")
+        defaults = self.default_settings()
         if item:
             item.pop("pk", None)
             item.pop("sk", None)
-            return item
+            return {**defaults, **item}
+        return defaults
+
+    def default_settings(self) -> dict[str, Any]:
         return {
             "llmProvider": "openai_compatible",
             "aiModel": os.environ.get("AI_MODEL", "gpt-5.4"),
@@ -75,7 +109,9 @@ class RssStorage:
             "codexModel": os.environ.get("OPENAI_CODEX_MODEL", "gpt-5.4"),
             "codexReasoningEffort": "medium",
             "codexClientVersion": os.environ.get("OPENAI_CODEX_CLIENT_VERSION", "0.118.0"),
+            "embeddingProvider": "openai_compatible",
             "embeddingModel": os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small"),
+            "ttsApiBase": os.environ.get("OPENAI_TTS_API_BASE", "https://api.openai.com/v1"),
             "ttsModel": os.environ.get("OPENAI_TTS_MODEL", "gpt-4o-mini-tts-2025-12-15"),
             "ttsVoice": os.environ.get("OPENAI_TTS_VOICE", "marin"),
             "ttsInstructions": os.environ.get(
@@ -83,6 +119,8 @@ class RssStorage:
                 "Read this as a calm, clear personal news reader. Use natural pacing, short pauses between paragraphs, and a warm but neutral tone.",
             ),
             "ttsMaxInputChars": 6000,
+            "ttsResponseFormat": "mp3",
+            "ttsSegmentPercent": 100,
             "autoSummarize": False,
             "autoFetchContent": False,
             "aiContentFormattingEnabled": False,
@@ -90,6 +128,7 @@ class RssStorage:
             "aiContentFormattingChunkChars": 8500,
             "aiContentFormattingMaxChunks": 8,
             "aiContentFormattingMaxTokens": 6000,
+            "aiContentFormattingTemperature": 0.1,
             "prefetchDistance": 3,
             "browserBypassEnabled": True,
             "browserBypassMode": "on_blocked",
@@ -105,17 +144,35 @@ class RssStorage:
             "scheduledAiPrefetchContent": True,
             "defaultArticleLimit": 50,
             "cleanupReadAfterDays": 30,
+            "articleContentCacheTtlDays": DEFAULT_ARTICLE_CONTENT_CACHE_TTL_DAYS,
             "semanticSearchEnabled": False,
             "exportDefaultFormat": "markdown",
         }
 
     def update_settings(self, updates: dict[str, Any]) -> dict[str, Any]:
+        stored_settings = self.table.get_item(Key={"pk": USER_PK, "sk": "SETTINGS#app"}).get("Item") or {}
         settings = self.get_settings()
+        previous_content_ttl = content_cache_ttl_days(settings)
+        had_content_ttl_setting = "articleContentCacheTtlDays" in stored_settings
         if "scheduledAiPrefetchTags" in updates:
             updates = {**updates, "scheduledAiPrefetchTags": _normalize_tags(updates.get("scheduledAiPrefetchTags"))}
+        if "articleContentCacheTtlDays" in updates:
+            updates = {
+                **updates,
+                "articleContentCacheTtlDays": _bounded_int(
+                    updates.get("articleContentCacheTtlDays"),
+                    DEFAULT_ARTICLE_CONTENT_CACHE_TTL_DAYS,
+                    minimum=1,
+                    maximum=365,
+                ),
+            }
         settings.update(updates)
         item = {"pk": USER_PK, "sk": "SETTINGS#app", **settings, "updatedAt": now_ms()}
         self.table.put_item(Item=_clean(item))
+        if "articleContentCacheTtlDays" in updates:
+            current_content_ttl = content_cache_ttl_days(settings)
+            if not had_content_ttl_setting or current_content_ttl != previous_content_ttl:
+                self.refresh_content_cache_ttl(current_content_ttl)
         return settings
 
     def default_feeds(self) -> list[dict[str, Any]]:
@@ -336,10 +393,12 @@ class RssStorage:
         self.table.put_item(Item=_clean(pk_item))
         return article
 
-    def save_article_content(self, article_id: str, content: str) -> None:
+    def save_article_content(self, article_id: str, content: str, content_ttl_days: Any | None = None) -> None:
         chunk_size = 300_000
         chunks = [content[i : i + chunk_size] for i in range(0, len(content), chunk_size)] or [""]
         old_count = int((self.get_article(article_id) or {}).get("contentChunkCount") or 0)
+        ttl_days = content_cache_ttl_days({"articleContentCacheTtlDays": content_ttl_days} if content_ttl_days is not None else self.get_settings())
+        expires_at = int(time.time()) + ttl_days * 24 * 60 * 60
         for index, chunk in enumerate(chunks):
             self.table.put_item(
                 Item=_clean(
@@ -350,6 +409,7 @@ class RssStorage:
                         "chunkIndex": index,
                         "content": chunk,
                         "updatedAt": now_ms(),
+                        "expiresAt": expires_at,
                     }
                 )
             )
@@ -361,20 +421,65 @@ class RssStorage:
                 "contentPreview": content[:1000],
                 "contentChunkCount": len(chunks),
                 "contentFetchedAt": now_ms(),
+                "contentExpiresAt": expires_at,
+                "articleContentCacheTtlDays": ttl_days,
             },
         )
 
     def get_article_content(self, article_id: str) -> str:
         article = self.get_article(article_id)
+        if content_cache_expired(article):
+            return ""
         count = int((article or {}).get("contentChunkCount") or 0)
+        now_epoch = int(time.time())
         response = self.table.query(
             KeyConditionExpression=Key("pk").eq(USER_PK)
             & Key("sk").begins_with(f"CONTENT#{article_id}#")
         )
-        chunks = sorted(response.get("Items", []), key=lambda item: int(item.get("chunkIndex") or 0))
+        chunks = sorted(
+            (
+                item
+                for item in response.get("Items", [])
+                if int(item.get("expiresAt") or (now_epoch + 1)) > now_epoch
+            ),
+            key=lambda item: int(item.get("chunkIndex") or 0),
+        )
         if count:
             chunks = [chunk for chunk in chunks if int(chunk.get("chunkIndex") or 0) < count]
         return "".join(str(item.get("content") or "") for item in chunks)
+
+    def refresh_content_cache_ttl(self, ttl_days: Any | None = None) -> dict[str, int]:
+        ttl_days = content_cache_ttl_days({"articleContentCacheTtlDays": ttl_days} if ttl_days is not None else self.get_settings())
+        expires_at = int(time.time()) + ttl_days * 24 * 60 * 60
+        chunk_count = 0
+        article_ids: set[str] = set()
+        last_key = None
+        while True:
+            query_args: dict[str, Any] = {
+                "KeyConditionExpression": Key("pk").eq(USER_PK) & Key("sk").begins_with("CONTENT#"),
+            }
+            if last_key:
+                query_args["ExclusiveStartKey"] = last_key
+            response = self.table.query(**query_args)
+            for item in response.get("Items", []):
+                item["expiresAt"] = expires_at
+                self.table.put_item(Item=_clean(item))
+                article_id = str(item.get("articleId") or "")
+                if article_id:
+                    article_ids.add(article_id)
+                chunk_count += 1
+            last_key = response.get("LastEvaluatedKey")
+            if not last_key:
+                break
+        for article_id in article_ids:
+            self.update_article(
+                article_id,
+                {
+                    "contentExpiresAt": expires_at,
+                    "articleContentCacheTtlDays": ttl_days,
+                },
+            )
+        return {"chunks": chunk_count, "articles": len(article_ids)}
 
     def mark_all_read(self) -> int:
         count = 0

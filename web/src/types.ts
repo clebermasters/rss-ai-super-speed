@@ -36,6 +36,7 @@ export interface Article {
   isSaved: boolean;
   contentAiFormatted: boolean;
   contentAiFormattedAt?: number | null;
+  contentExpiresAt?: number | null;
   contentFetchedAt?: number | null;
   fetchedAt?: number | null;
   summaryGeneratedAt?: number | null;
@@ -56,13 +57,30 @@ export interface Settings {
   aiApiBase: string;
   codexModel: string;
   codexReasoningEffort: string;
+  codexClientVersion: string;
+  embeddingProvider: string;
   embeddingModel: string;
+  ttsApiBase: string;
   ttsModel: string;
   ttsVoice: string;
   ttsInstructions: string;
+  ttsMaxInputChars: number;
+  ttsResponseFormat: string;
+  ttsSegmentPercent: number;
+  autoSummarize: boolean;
+  autoFetchContent: boolean;
   aiContentFormattingEnabled: boolean;
+  aiContentFormattingMinWords: number;
+  aiContentFormattingChunkChars: number;
+  aiContentFormattingMaxChunks: number;
+  aiContentFormattingMaxTokens: number;
+  aiContentFormattingTemperature: number;
+  prefetchDistance: number;
   browserBypassEnabled: boolean;
   browserBypassMode: string;
+  refreshOnOpen: boolean;
+  scheduledRefreshEnabled: boolean;
+  scheduledRefreshRate: string;
   scheduledAiPrefetchEnabled: boolean;
   scheduledAiPrefetchTags: string[];
   scheduledAiPrefetchLimit: number;
@@ -70,6 +88,11 @@ export interface Settings {
   scheduledAiPrefetchRetryMinutes: number;
   scheduledAiPrefetchSummaries: boolean;
   scheduledAiPrefetchContent: boolean;
+  defaultArticleLimit: number;
+  cleanupReadAfterDays: number;
+  articleContentCacheTtlDays: number;
+  semanticSearchEnabled: boolean;
+  exportDefaultFormat: string;
 }
 
 export interface FetchContentResponse {

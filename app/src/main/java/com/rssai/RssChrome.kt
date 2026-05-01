@@ -139,21 +139,21 @@ data class RssPalette(
 
 object RssPalettes {
     val Dark = RssPalette(
-        ink = Color(0xFF06111F),
-        inkDeep = Color(0xFF020814),
-        panel = Color(0xFF101A29),
-        panelSoft = Color(0xFF152236),
-        line = Color(0xFF263449),
-        text = Color(0xFFF4F7FB),
-        muted = Color(0xFFA9B4C4),
-        dim = Color(0xFF748096),
-        blue = Color(0xFF26A7FF),
-        violet = Color(0xFFA77BFF),
-        green = Color(0xFF1FD96D),
-        orange = Color(0xFFFF7A1A),
-        red = Color(0xFFFF455C),
-        bottomBar = Color(0xEE0D1726),
-        selected = Color(0x3326A7FF),
+        ink = Color(0xFF09090B),
+        inkDeep = Color(0xFF09090B),
+        panel = Color(0xFF121215),
+        panelSoft = Color(0xFF18181B),
+        line = Color(0xFF27272A),
+        text = Color(0xFFFAFAFA),
+        muted = Color(0xFFA1A1AA),
+        dim = Color(0xFF71717A),
+        blue = Color(0xFFA78BFA),
+        violet = Color(0xFFA78BFA),
+        green = Color(0xFF34D399),
+        orange = Color(0xFFF59E0B),
+        red = Color(0xFFEF4444),
+        bottomBar = Color(0xFA121215),
+        selected = Color(0x1EA78BFA),
     )
 
     val Light = RssPalette(

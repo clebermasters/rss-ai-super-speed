@@ -109,6 +109,8 @@ fun RssAiApp(openUrl: (String) -> Unit) {
     var brandNewArticleIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var selected by remember { mutableStateOf<Article?>(null) }
     var readerArticles by remember { mutableStateOf<List<Article>>(emptyList()) }
+    var selectedFeedId by remember { mutableStateOf("") }
+    var selectedTag by remember { mutableStateOf("") }
     var query by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("Configure API or refresh feeds.") }
     var loading by remember { mutableStateOf(false) }
@@ -129,6 +131,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
     var showSettings by remember { mutableStateOf(apiBase.isBlank() || apiToken.isBlank()) }
     var showAddFeed by remember { mutableStateOf(false) }
     var manageFeed by remember { mutableStateOf<Feed?>(null) }
+    var editArticleTags by remember { mutableStateOf<Article?>(null) }
     val scope = rememberCoroutineScope()
 
     fun client() = RssApiClient(apiBase, apiToken)
@@ -139,6 +142,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
             content = incoming.content ?: base.content,
             contentPreview = incoming.contentPreview ?: base.contentPreview,
             sourceFeedId = incoming.sourceFeedId ?: base.sourceFeedId,
+            tags = incoming.tags.ifEmpty { base.tags },
             score = incoming.score ?: base.score,
             comments = incoming.comments ?: base.comments,
         )
@@ -337,7 +341,12 @@ fun RssAiApp(openUrl: (String) -> Unit) {
         openArticle(target, queue = activeReaderQueue(), prewarmDelta = delta)
     }
 
-    fun loadData(refreshFirst: Boolean = false, searchQuery: String = query) {
+    fun loadData(
+        refreshFirst: Boolean = false,
+        searchQuery: String = query,
+        sourceFeedId: String = selectedFeedId,
+        tagFilter: String = selectedTag,
+    ) {
         if (apiBase.isBlank() || apiToken.isBlank()) {
             showSettings = true
             return
@@ -350,7 +359,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                 feeds = bootstrap.feeds
                 settings = bootstrap.settings
                 providers = client().providers().providers
-                articles = client().articles(searchQuery).articles
+                articles = client().articles(searchQuery, source = sourceFeedId, tag = tagFilter).articles
                 brandNewArticleIds = detectBrandNewArticleIds(prefs, articles)
             }.onSuccess {
                 status = if (brandNewArticleIds.isEmpty()) {
@@ -373,6 +382,9 @@ fun RssAiApp(openUrl: (String) -> Unit) {
 
     val palette = RssPalettes.forMode(themeMode)
     RssColors.palette = palette
+    val availableTags = remember(feeds, articles) {
+        normalizeTags(feeds.flatMap { it.tags } + articles.flatMap { it.tags }).sorted()
+    }
     val colorScheme = when (themeMode) {
         RssThemeMode.Dark -> androidx.compose.material3.darkColorScheme(
             background = palette.ink,
@@ -408,6 +420,8 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                 articles = articles,
                 brandNewArticleIds = brandNewArticleIds,
                 readerArticles = readerArticles,
+                availableTags = availableTags,
+                selectedTag = selectedTag,
                 query = query,
                 onQuery = {
                     query = it
@@ -425,13 +439,19 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                 onAddFeed = { showAddFeed = true },
                 onManageFeed = { manageFeed = it },
                 onSelectFeed = { feed ->
-                    val feedQuery = feed?.name.orEmpty()
-                    query = feedQuery
+                    selectedFeedId = feed?.feedId.orEmpty()
                     currentScreen = RssScreen.Articles
-                    loadData(searchQuery = feedQuery)
+                    loadData()
+                },
+                onTag = { tag ->
+                    selectedTag = tag
+                    loadData(tagFilter = tag)
                 },
                 onSelect = { article, queue ->
                     openArticle(article, queue = queue)
+                },
+                onEditArticleTags = { article ->
+                    editArticleTags = latestArticleSnapshot(article)
                 },
                 onNavigateArticle = { delta -> navigateArticle(delta) },
                 onToggleSave = {
@@ -535,7 +555,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                                 settings = bootstrap.settings
                                 providers = client().providers().providers
                                 query = ""
-                                articles = client().articles().articles
+                                articles = client().articles(query, source = selectedFeedId, tag = selectedTag).articles
                                 brandNewArticleIds = detectBrandNewArticleIds(prefs, articles)
                                 currentScreen = RssScreen.Feeds
                                 created to refreshError
@@ -577,7 +597,7 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                                 settings = bootstrap.settings
                                 providers = client().providers().providers
                                 query = ""
-                                articles = client().articles().articles
+                                articles = client().articles(query, source = selectedFeedId, tag = selectedTag).articles
                                 brandNewArticleIds = detectBrandNewArticleIds(prefs, articles)
                                 currentScreen = RssScreen.Feeds
                                 updated to refreshError
@@ -606,10 +626,10 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                                 feeds = bootstrap.feeds
                                 settings = bootstrap.settings
                                 providers = client().providers().providers
-                                if (query.equals(feed.name, ignoreCase = true)) {
-                                    query = ""
+                                if (selectedFeedId == feed.feedId) {
+                                    selectedFeedId = ""
                                 }
-                                articles = client().articles(query).articles
+                                articles = client().articles(query, source = selectedFeedId, tag = selectedTag).articles
                                 brandNewArticleIds = detectBrandNewArticleIds(prefs, articles)
                                 currentScreen = RssScreen.Feeds
                                 feed
@@ -617,6 +637,28 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                                 status = "Removed ${it.name}"
                             }.onFailure {
                                 status = it.safeUserMessage("Remove feed failed")
+                            }
+                            loading = false
+                        }
+                    },
+                )
+            }
+            editArticleTags?.let { article ->
+                EditArticleTagsDialog(
+                    article = article,
+                    onDismiss = { editArticleTags = null },
+                    onSave = { target, tags ->
+                        editArticleTags = null
+                        scope.launch {
+                            loading = true
+                            status = "Updating article tags..."
+                            runCatching {
+                                client().updateArticleTags(target.articleId, tags)
+                            }.onSuccess {
+                                updateArticleEverywhere(it)
+                                status = "Article tags updated"
+                            }.onFailure {
+                                status = it.safeUserMessage("Update article tags failed")
                             }
                             loading = false
                         }

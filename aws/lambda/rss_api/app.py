@@ -66,6 +66,9 @@ def route(method: str, path: str, event: dict[str, Any]) -> dict[str, Any]:
     if method == "GET" and path == "/v1/feeds":
         return response(200, {"feeds": storage.list_feeds()})
 
+    if method == "GET" and path == "/v1/tags":
+        return response(200, {"tags": storage.list_tags()})
+
     if method == "POST" and path == "/v1/feeds":
         payload = parse_json_body(event)
         if not payload.get("url"):
@@ -89,6 +92,8 @@ def route(method: str, path: str, event: dict[str, Any]) -> dict[str, Any]:
             "unread": _bool(_query_one(query, "unread")),
             "saved": _bool(_query_one(query, "saved")),
             "source": _query_one(query, "source"),
+            "tag": _query_one(query, "tag"),
+            "tags": _query_one(query, "tags"),
             "hours": _query_one(query, "hours"),
             "minScore": _query_one(query, "minScore"),
             "include": _query_one(query, "include"),

@@ -113,6 +113,7 @@ fun ReaderDashboard(
     onFetchContent: () -> Unit,
     onFormatContent: () -> Unit,
     onSummarize: () -> Unit,
+    onEditTags: (Article) -> Unit,
     onLoadSpeech: suspend (SpeechRequest) -> SpeechAudio,
     modifier: Modifier = Modifier,
 ) {
@@ -204,6 +205,8 @@ fun ReaderDashboard(
                 article.comments?.let { Text("$it comments", color = RssColors.Muted) }
                 Text(settings.llmProvider, color = RssColors.Violet, style = MaterialTheme.typography.bodyMedium)
             }
+            Spacer(Modifier.height(8.dp))
+            ArticleTagsRow(article = article, onEditTags = onEditTags, modifier = Modifier.fillMaxWidth())
         }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {

@@ -34,11 +34,17 @@ data class Article(
     val publishedAt: String? = null,
     val source: String = "",
     val sourceFeedId: String? = null,
+    val tags: List<String> = emptyList(),
     val score: Int? = null,
     val comments: Int? = null,
     val isRead: Boolean = false,
     val isSaved: Boolean = false,
     val contentAiFormatted: Boolean = false,
+)
+
+@Serializable
+data class ArticleTagsRequest(
+    val tags: List<String> = emptyList(),
 )
 
 @Serializable

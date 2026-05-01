@@ -24,6 +24,7 @@ const props = defineProps<{
 
 defineEmits<{
   audioEnded: [];
+  editTags: [];
   fetchContent: [];
   formatContent: [];
   playSpeech: [target: SpeechTarget];
@@ -102,6 +103,11 @@ watch(
         <span>Published {{ plainDate(article.publishedAt) }}</span>
         <span v-if="article.score">{{ article.score }} pts</span>
         <span v-if="article.contentAiFormatted">AI formatted</span>
+      </div>
+
+      <div class="reader-tags">
+        <button v-for="tag in article.tags || []" :key="tag" class="tag-chip passive">#{{ tag }}</button>
+        <button class="mini-tag-button" @click="$emit('editTags')">{{ article.tags?.length ? 'Edit tags' : 'Add tags' }}</button>
       </div>
 
       <a class="source-link" :href="article.link" target="_blank" rel="noreferrer">

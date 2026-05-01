@@ -35,6 +35,26 @@ def _clean(value: Any) -> Any:
     return value
 
 
+def _normalize_tags(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw_tags = value.split(",")
+    elif isinstance(value, (list, tuple, set)):
+        raw_tags = value
+    else:
+        raw_tags = [value]
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for tag in raw_tags:
+        clean = " ".join(str(tag).strip().lstrip("#").lower().split())
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        normalized.append(clean)
+    return normalized
+
+
 class RssStorage:
     def __init__(self, table_name: str | None = None, bucket_name: str | None = None) -> None:
         self.table_name = table_name or os.environ["TABLE_NAME"]
@@ -138,7 +158,7 @@ class RssStorage:
             "name": name,
             "url": url,
             "enabled": bool(payload.get("enabled", True)),
-            "tags": payload.get("tags") or [],
+            "tags": _normalize_tags(payload.get("tags")),
             "limit": int(payload.get("limit") or 20),
             "lastFetchedAt": payload.get("lastFetchedAt"),
             "lastFetchStatus": payload.get("lastFetchStatus"),
@@ -184,10 +204,26 @@ class RssStorage:
         current = self.get_feed(feed_id)
         if not current:
             return None
-        current.update({k: v for k, v in updates.items() if k not in {"feedId", "createdAt"}})
+        clean_updates = {k: v for k, v in updates.items() if k not in {"feedId", "createdAt"}}
+        tags_changed = "tags" in clean_updates
+        if tags_changed:
+            clean_updates["tags"] = _normalize_tags(clean_updates.get("tags"))
+        current.update(clean_updates)
         current["updatedAt"] = now_ms()
         self.table.put_item(Item=_clean({"pk": USER_PK, "sk": f"FEED#{feed_id}", **current}))
+        if tags_changed:
+            self._sync_feed_article_tags(feed_id, current.get("tags") or [])
         return current
+
+    def _sync_feed_article_tags(self, feed_id: str, tags: list[str]) -> int:
+        count = 0
+        normalized = _normalize_tags(tags)
+        for article in self.list_articles({"limit": 5000}):
+            if article.get("sourceFeedId") != feed_id:
+                continue
+            self.update_article(str(article["articleId"]), {"tags": normalized})
+            count += 1
+        return count
 
     def delete_feed(self, feed_id: str) -> None:
         self.table.delete_item(Key={"pk": USER_PK, "sk": f"FEED#{feed_id}"})
@@ -217,7 +253,7 @@ class RssStorage:
                 "sourceFeedId": article.get("sourceFeedId"),
                 "score": article.get("score"),
                 "comments": article.get("comments"),
-                "tags": article.get("tags") or [],
+                "tags": _normalize_tags(article.get("tags")),
                 "isRead": bool(article.get("isRead", False)),
                 "isSaved": bool(article.get("isSaved", False)),
                 "isHidden": bool(article.get("isHidden", False)),
@@ -279,6 +315,8 @@ class RssStorage:
         article = self.get_article(article_id)
         if not article:
             return None
+        if "tags" in updates:
+            updates = {**updates, "tags": _normalize_tags(updates.get("tags"))}
         article.update(updates)
         article["updatedAt"] = now_ms()
         pk_item = {"pk": USER_PK, "sk": f"ARTICLE#{article_id}", **article}
@@ -356,6 +394,26 @@ class RssStorage:
             "feedCount": len(feeds),
             "lastRefresh": max((feed.get("lastFetchedAt") or 0 for feed in feeds), default=0),
         }
+
+    def list_tags(self) -> list[dict[str, Any]]:
+        tag_map: dict[str, dict[str, int]] = {}
+        for feed in self.list_feeds():
+            for tag in _normalize_tags(feed.get("tags")):
+                tag_map.setdefault(tag, {"feedCount": 0, "articleCount": 0, "unreadCount": 0})
+                tag_map[tag]["feedCount"] += 1
+        for article in self.list_articles({"limit": 5000}):
+            for tag in _normalize_tags(article.get("tags")):
+                tag_map.setdefault(tag, {"feedCount": 0, "articleCount": 0, "unreadCount": 0})
+                tag_map[tag]["articleCount"] += 1
+                if not article.get("isRead"):
+                    tag_map[tag]["unreadCount"] += 1
+        return [
+            {"tag": tag, **counts}
+            for tag, counts in sorted(
+                tag_map.items(),
+                key=lambda item: (-item[1]["articleCount"], item[0]),
+            )
+        ]
 
     def put_codex_auth(self, payload: dict[str, Any], key: str) -> None:
         self.s3.put_object(
@@ -501,6 +559,11 @@ class RssStorage:
             article.get("sourceFeedId"),
         }:
             return False
+        requested_tags = _normalize_tags(filters.get("tag")) + _normalize_tags(filters.get("tags"))
+        if requested_tags:
+            article_tags = set(_normalize_tags(article.get("tags")))
+            if not article_tags.intersection(requested_tags):
+                return False
         if filters.get("minScore") and int(article.get("score") or 0) < int(filters["minScore"]):
             return False
         if filters.get("hours"):

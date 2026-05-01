@@ -29,6 +29,7 @@ export interface Article {
   publishedAt?: string | null;
   source: string;
   sourceFeedId?: string | null;
+  tags: string[];
   score?: number | null;
   comments?: number | null;
   isRead: boolean;
@@ -39,6 +40,14 @@ export interface Article {
   fetchedAt?: number | null;
   summaryGeneratedAt?: number | null;
   updatedAt?: number | null;
+}
+
+export interface FeedUpdateRequest {
+  name?: string | null;
+  url: string;
+  enabled: boolean;
+  tags: string[];
+  limit: number;
 }
 
 export interface Settings {
@@ -118,6 +127,10 @@ export interface ArticlesResponse {
 
 export interface FeedsResponse {
   feeds: Feed[];
+}
+
+export interface TagsResponse {
+  tags: Array<{ tag: string; feedCount: number; articleCount: number; unreadCount: number }>;
 }
 
 export interface RefreshResponse {

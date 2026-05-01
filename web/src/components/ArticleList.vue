@@ -50,6 +50,9 @@ defineEmits<{
           </span>
           <strong>{{ article.title }}</strong>
           <small>{{ article.source }} · Published {{ plainDate(article.publishedAt) }}</small>
+          <span v-if="article.tags?.length" class="inline-tags">
+            <b v-for="tag in article.tags.slice(0, 4)" :key="tag">#{{ tag }}</b>
+          </span>
         </span>
         <span class="article-meta">
           <b v-if="article.score">{{ article.score }}</b>

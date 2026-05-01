@@ -7,9 +7,11 @@ import ReaderPane from './components/ReaderPane.vue';
 import RsvpReader from './components/RsvpReader.vue';
 import SettingsModal from './components/SettingsModal.vue';
 import StatusToast from './components/StatusToast.vue';
+import TagEditorModal from './components/TagEditorModal.vue';
+import TagFilterBar from './components/TagFilterBar.vue';
 import TopBar from './components/TopBar.vue';
 import { useRssReader } from './composables/useRssReader';
-import type { Article } from './types';
+import type { Article, Feed } from './types';
 
 const reader = useRssReader();
 const feedRailCollapsed = ref(false);
@@ -18,6 +20,11 @@ const readerFullscreen = ref(false);
 const flowMode = ref(false);
 const rsvpOpen = ref(false);
 const rsvpMode = ref<'word-runner' | 'spritz'>('word-runner');
+const tagEditor = ref<
+  | { kind: 'feed'; subject: string; tags: string[]; feed: Feed }
+  | { kind: 'article'; subject: string; tags: string[]; article: Article }
+  | null
+>(null);
 
 function toggleFlowMode(): void {
   flowMode.value = !flowMode.value;
@@ -57,6 +64,27 @@ function openFlowRsvp(article: Article, mode: 'word-runner' | 'spritz'): void {
 function listenFlowArticle(article: Article, target: 'content' | 'summary'): void {
   void reader.selectArticle(article).then(() => reader.playSpeech(target));
 }
+
+function editFeedTags(feed: Feed): void {
+  tagEditor.value = { kind: 'feed', subject: feed.name, tags: feed.tags || [], feed };
+}
+
+function editSelectedArticleTags(): void {
+  const article = reader.selectedArticle.value;
+  if (!article) return;
+  tagEditor.value = { kind: 'article', subject: article.title, tags: article.tags || [], article };
+}
+
+function saveTags(tags: string[]): void {
+  const current = tagEditor.value;
+  if (!current) return;
+  tagEditor.value = null;
+  if (current.kind === 'feed') {
+    void reader.updateFeedTags(current.feed, tags);
+  } else {
+    void reader.updateArticleTags(current.article, tags);
+  }
+}
 </script>
 
 <template>
@@ -74,11 +102,18 @@ function listenFlowArticle(article: Article, target: 'content' | 'summary'): voi
       @settings="reader.showSettings.value = true"
     />
 
+    <TagFilterBar
+      :selected-tag="reader.selectedTag.value"
+      :tags="reader.availableTags.value"
+      @select="reader.setTag"
+    />
+
     <InfiniteArticleFlow
       v-if="flowMode"
       :articles="reader.articles.value"
       :brand-new-article-ids="reader.brandNewArticleIds.value"
       :loading="reader.loading.value"
+      :selected-tag="reader.selectedTag.value"
       @focus="focusFlowArticle"
       @listen="listenFlowArticle"
       @open="openFlowArticle"
@@ -96,6 +131,7 @@ function listenFlowArticle(article: Article, target: 'content' | 'summary'): voi
         :feeds="reader.feeds.value"
         :selected-feed-id="reader.selectedFeedId.value"
         :total-unread="reader.totalUnread.value"
+        @edit-tags="editFeedTags"
         @select="selectFeed"
         @toggle="feedRailCollapsed = !feedRailCollapsed"
       />
@@ -126,6 +162,7 @@ function listenFlowArticle(article: Article, target: 'content' | 'summary'): voi
         :speech-source-chars="reader.speechSourceChars.value"
         :speech-target="reader.speechTarget.value"
         @audio-ended="reader.handleSpeechEnded"
+        @edit-tags="editSelectedArticleTags"
         @fetch-content="reader.fetchContent"
         @format-content="reader.formatContent"
         @play-speech="reader.playSpeech"
@@ -153,6 +190,14 @@ function listenFlowArticle(article: Article, target: 'content' | 'summary'): voi
       :mode="rsvpMode"
       :open="rsvpOpen"
       @close="rsvpOpen = false"
+    />
+
+    <TagEditorModal
+      :open="Boolean(tagEditor)"
+      :subject="tagEditor?.subject || ''"
+      :tags="tagEditor?.tags || []"
+      @close="tagEditor = null"
+      @save="saveTags"
     />
 
     <StatusToast :notice="reader.notice.value" @dismiss="reader.dismissNotice" />

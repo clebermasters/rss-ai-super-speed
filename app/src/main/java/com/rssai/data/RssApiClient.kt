@@ -33,9 +33,14 @@ class RssApiClient(
     suspend fun refreshFeed(feedId: String): RefreshResponse =
         post("/v1/feeds/$feedId/refresh", "{}")
 
-    suspend fun articles(query: String = ""): ArticlesResponse {
-        val suffix = if (query.isBlank()) "" else "?query=${query.urlEncode()}"
-        return get("/v1/articles$suffix")
+    suspend fun articles(query: String = "", source: String = "", tag: String = "", limit: Int = 200): ArticlesResponse {
+        val params = buildList {
+            add("limit=${limit.coerceIn(1, 500)}")
+            if (query.isNotBlank()) add("query=${query.urlEncode()}")
+            if (source.isNotBlank()) add("source=${source.urlEncode()}")
+            if (tag.isNotBlank()) add("tag=${tag.urlEncode()}")
+        }.joinToString("&")
+        return get("/v1/articles?$params")
     }
 
     suspend fun article(articleId: String): Article = get("/v1/articles/$articleId")
@@ -47,6 +52,9 @@ class RssApiClient(
     suspend fun markUnread(articleId: String): Article = post("/v1/articles/$articleId/mark-unread", "{}")
 
     suspend fun toggleSave(articleId: String): Article = post("/v1/articles/$articleId/toggle-save", "{}")
+
+    suspend fun updateArticleTags(articleId: String, tags: List<String>): Article =
+        patch("/v1/articles/$articleId", json.encodeToString(ArticleTagsRequest(tags)))
 
     suspend fun fetchContent(articleId: String, formatWithAi: Boolean = false, markRead: Boolean = true): FetchContentResponse =
         post("/v1/articles/$articleId/fetch-content", """{"formatWithAi":$formatWithAi,"markRead":$markRead}""")
@@ -75,6 +83,8 @@ class RssApiClient(
     private suspend inline fun <reified T> get(path: String): T = request("GET", path)
 
     private suspend inline fun <reified T> post(path: String, body: String): T = request("POST", path, body)
+
+    private suspend inline fun <reified T> patch(path: String, body: String): T = request("PATCH", path, body)
 
     private suspend inline fun <reified T> put(path: String, body: String): T = request("PUT", path, body)
 

@@ -102,8 +102,11 @@ import kotlinx.coroutines.launch
 fun ArticlesDashboard(
     articles: List<Article>,
     brandNewArticleIds: Set<String>,
+    availableTags: List<String>,
+    selectedTag: String,
     query: String,
     onQuery: (String) -> Unit,
+    onTag: (String) -> Unit,
     onSelect: (Article, List<Article>) -> Unit,
     modifier: Modifier = Modifier,
     title: String = "All Articles",
@@ -117,6 +120,7 @@ fun ArticlesDashboard(
         (!unreadOnly || !article.isRead)
             && (!savedOnly || article.isSaved)
             && (!summarizedOnly || !article.summary.isNullOrBlank())
+            && (selectedTag.isBlank() || selectedTag in normalizeTags(article.tags))
     }
     val filteredNewCount = filtered.count { it.articleId in brandNewArticleIds }
     LazyColumn(
@@ -158,6 +162,9 @@ fun ArticlesDashboard(
                 }
                 item { FilterPill("${filtered.size} shown", true, onClick = {}) }
             }
+        }
+        item {
+            TagFilterRow(tags = availableTags, selectedTag = selectedTag, onTag = onTag)
         }
         if (filtered.isEmpty()) {
             item {
@@ -234,6 +241,9 @@ fun ArticleListCard(article: Article, isBrandNew: Boolean, onClick: () -> Unit) 
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (article.tags.isNotEmpty()) {
+                    ArticleTagsRow(article = article, onEditTags = {}, showEdit = false)
+                }
             }
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (isBrandNew) {

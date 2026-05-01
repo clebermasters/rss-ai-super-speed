@@ -2,7 +2,7 @@
 import type { Feed } from '../types';
 
 defineProps<{ brandNewCount: number; collapsed: boolean; feeds: Feed[]; selectedFeedId: string; totalUnread: number }>();
-defineEmits<{ select: [feedId: string]; toggle: [] }>();
+defineEmits<{ editTags: [feed: Feed]; select: [feedId: string]; toggle: [] }>();
 </script>
 
 <template>
@@ -18,12 +18,26 @@ defineEmits<{ select: [feedId: string]; toggle: [] }>();
         <small>{{ totalUnread }} unread<span v-if="brandNewCount > 0"> · {{ brandNewCount }} new</span></small>
       </span>
     </button>
-    <button v-for="feed in feeds" :key="feed.feedId" class="feed-card" :class="{ active: selectedFeedId === feed.feedId }" :title="`${feed.name} · ${feed.unreadCount} unread`" @click="$emit('select', feed.feedId)">
+    <div
+      v-for="feed in feeds"
+      :key="feed.feedId"
+      class="feed-card"
+      :class="{ active: selectedFeedId === feed.feedId }"
+      :title="`${feed.name} · ${feed.unreadCount} unread`"
+      role="button"
+      tabindex="0"
+      @click="$emit('select', feed.feedId)"
+      @keydown.enter="$emit('select', feed.feedId)"
+    >
       <span class="feed-glyph">{{ feed.name.slice(0, 2).toUpperCase() }}</span>
       <span class="feed-text">
         <strong>{{ feed.name }}</strong>
         <small>{{ feed.unreadCount }} unread · {{ feed.articleCount }} total</small>
+        <span v-if="feed.tags?.length" class="inline-tags">
+          <b v-for="tag in feed.tags.slice(0, 3)" :key="tag">#{{ tag }}</b>
+        </span>
       </span>
-    </button>
+      <button v-if="!collapsed" class="mini-tag-button" @click.stop="$emit('editTags', feed)">Tags</button>
+    </div>
   </aside>
 </template>

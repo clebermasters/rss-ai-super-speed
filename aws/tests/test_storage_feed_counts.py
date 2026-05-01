@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lambda" / "rss_api"))
 
-from storage import RssStorage  # noqa: E402
+from storage import RssStorage, _normalize_tags  # noqa: E402
 
 
 class FakeTable:
@@ -127,6 +127,25 @@ class StorageFeedCountsTest(unittest.TestCase):
 
         self.assertEqual([article["articleId"] for article in articles], ["a1", "b1"])
         self.assertEqual(storage.table.calls, 2)
+
+    def test_normalize_tags_lowercases_deduplicates_and_accepts_csv(self) -> None:
+        self.assertEqual(_normalize_tags(" AI, #ML, ai, machine   learning "), ["ai", "ml", "machine learning"])
+
+    def test_article_matches_single_tag_filter(self) -> None:
+        storage = RssStorage.__new__(RssStorage)
+        article = {"articleId": "a1", "tags": ["AI", "Research"]}
+
+        self.assertTrue(storage._article_matches(article, {"tag": "ai"}))
+        self.assertTrue(storage._article_matches(article, {"tag": "security, research"}))
+        self.assertFalse(storage._article_matches(article, {"tag": "security"}))
+
+    def test_article_matches_multiple_tags_filter(self) -> None:
+        storage = RssStorage.__new__(RssStorage)
+        article = {"articleId": "a1", "tags": ["machine learning", "papers"]}
+
+        self.assertTrue(storage._article_matches(article, {"tags": ["ai", "papers"]}))
+        self.assertTrue(storage._article_matches(article, {"tags": "ml, machine learning"}))
+        self.assertFalse(storage._article_matches(article, {"tags": ["security", "ops"]}))
 
 
 if __name__ == "__main__":

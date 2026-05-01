@@ -35,6 +35,7 @@ export function useRssReader() {
   const articles = ref<Article[]>([]);
   const brandNewArticleIds = ref<Set<string>>(new Set());
   const selectedFeedId = ref('');
+  const selectedTag = ref('');
   const selectedArticle = ref<Article | null>(null);
   const query = ref('');
   const filter = ref<ArticleFilter>('all');
@@ -59,6 +60,25 @@ export function useRssReader() {
   const brandNewCount = computed(() => brandNewArticleIds.value.size);
   const selectedFeed = computed(() => feeds.value.find((feed) => feed.feedId === selectedFeedId.value) || null);
   const activeSettings = computed(() => settings.value || defaultSettings());
+  const availableTags = computed(() => {
+    const counts = new Map<string, { tag: string; feedCount: number; articleCount: number; unreadCount: number }>();
+    for (const feed of feeds.value) {
+      for (const tag of normalizeTags(feed.tags)) {
+        const current = counts.get(tag) || { tag, feedCount: 0, articleCount: 0, unreadCount: 0 };
+        current.feedCount += 1;
+        counts.set(tag, current);
+      }
+    }
+    for (const article of articles.value) {
+      for (const tag of normalizeTags(article.tags)) {
+        const current = counts.get(tag) || { tag, feedCount: 0, articleCount: 0, unreadCount: 0 };
+        current.articleCount += 1;
+        if (!article.isRead) current.unreadCount += 1;
+        counts.set(tag, current);
+      }
+    }
+    return [...counts.values()].sort((a, b) => b.articleCount - a.articleCount || a.tag.localeCompare(b.tag));
+  });
 
   function client(): RssApiClient {
     return new RssApiClient(config.value.apiBaseUrl, config.value.apiToken);
@@ -96,6 +116,7 @@ export function useRssReader() {
       const data = await client().articles({
         query: query.value.trim() || undefined,
         source: selectedFeedId.value || undefined,
+        tag: selectedTag.value || undefined,
         unread: filter.value === 'unread',
         saved: filter.value === 'saved',
         limit: 200,
@@ -296,6 +317,49 @@ export function useRssReader() {
     selectedFeedId.value = feedId;
   }
 
+  function setTag(tag: string): void {
+    selectedTag.value = normalizeTags(tag)[0] || '';
+  }
+
+  async function updateFeedTags(feed: Feed, tags: string[]): Promise<void> {
+    const normalized = normalizeTags(tags);
+    busyAction.value = 'Updating feed tags';
+    try {
+      const updated = await client().updateFeed(feed.feedId, {
+        name: feed.name,
+        url: feed.url,
+        enabled: feed.enabled,
+        tags: normalized,
+        limit: feed.limit || 20,
+      });
+      feeds.value = feeds.value.map((item) => (item.feedId === updated.feedId ? { ...item, ...updated } : item));
+      articles.value = articles.value.map((article) => (article.sourceFeedId === updated.feedId ? { ...article, tags: updated.tags } : article));
+      if (selectedArticle.value?.sourceFeedId === updated.feedId) {
+        selectedArticle.value = { ...selectedArticle.value, tags: updated.tags };
+      }
+      notice.value = { kind: 'success', message: `Updated tags for ${updated.name}.` };
+      await loadArticles({ preserveSelection: true });
+    } catch (error) {
+      handleError(error, 'Unable to update feed tags.');
+    } finally {
+      busyAction.value = '';
+    }
+  }
+
+  async function updateArticleTags(article: Article, tags: string[]): Promise<void> {
+    const normalized = normalizeTags(tags);
+    busyAction.value = 'Updating article tags';
+    try {
+      const updated = await client().updateArticle(article.articleId, { tags: normalized });
+      replaceArticle({ ...article, ...updated });
+      notice.value = { kind: 'success', message: 'Article tags updated.' };
+    } catch (error) {
+      handleError(error, 'Unable to update article tags.');
+    } finally {
+      busyAction.value = '';
+    }
+  }
+
   function dismissNotice(): void {
     notice.value = null;
   }
@@ -345,6 +409,9 @@ export function useRssReader() {
 
   function replaceArticle(article: Article): void {
     articles.value = articles.value.map((item) => (item.articleId === article.articleId ? { ...item, ...article } : item));
+    if (selectedArticle.value?.articleId === article.articleId) {
+      selectedArticle.value = { ...selectedArticle.value, ...article };
+    }
   }
 
   function refreshFeedCounts(): void {
@@ -378,7 +445,7 @@ export function useRssReader() {
   }
 
   watch(query, scheduleLoadArticles);
-  watch([selectedFeedId, filter], () => void loadArticles({ preserveSelection: false }));
+  watch([selectedFeedId, selectedTag, filter], () => void loadArticles({ preserveSelection: false }));
   onMounted(() => void initialize());
 
   return {
@@ -386,6 +453,7 @@ export function useRssReader() {
     articles,
     audioLabel,
     audioUrl,
+    availableTags,
     bootstrap,
     brandNewArticleIds,
     brandNewCount,
@@ -409,6 +477,8 @@ export function useRssReader() {
     selectedFeed,
     selectedFeedId,
     setFeed,
+    selectedTag,
+    setTag,
     setSpeechSegmentIndex,
     setSpeechSegmentPercent,
     settings,
@@ -425,6 +495,8 @@ export function useRssReader() {
     handleSpeechEnded,
     toggleSaved,
     totalUnread,
+    updateArticleTags,
+    updateFeedTags,
   };
 }
 
@@ -435,4 +507,17 @@ function delay(ms: number): Promise<void> {
 function loadStoredInt(key: string, fallback: number): number {
   const value = Number.parseInt(localStorage.getItem(`rss-ai-web-speech:${key}`) || '', 10);
   return Number.isFinite(value) ? value : fallback;
+}
+
+function normalizeTags(value: string | string[] | null | undefined): string[] {
+  const raw = Array.isArray(value) ? value : String(value || '').split(',');
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const tag of raw) {
+    const clean = String(tag).trim().replace(/^#/, '').toLowerCase().replace(/\s+/g, ' ');
+    if (!clean || seen.has(clean)) continue;
+    seen.add(clean);
+    normalized.push(clean);
+  }
+  return normalized;
 }

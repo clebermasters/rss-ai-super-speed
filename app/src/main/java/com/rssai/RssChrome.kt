@@ -103,6 +103,7 @@ import kotlinx.coroutines.launch
 enum class RssScreen(val label: String) {
     Feeds("Feeds"),
     Articles("Articles"),
+    Flow("Flow"),
     Reader("Reader"),
     Saved("Saved"),
 }
@@ -207,6 +208,8 @@ fun ModernRssLayout(
     articles: List<Article>,
     brandNewArticleIds: Set<String>,
     readerArticles: List<Article>,
+    availableTags: List<String>,
+    selectedTag: String,
     query: String,
     onQuery: (String) -> Unit,
     selected: Article?,
@@ -221,7 +224,9 @@ fun ModernRssLayout(
     onAddFeed: () -> Unit,
     onManageFeed: (Feed) -> Unit,
     onSelectFeed: (Feed?) -> Unit,
+    onTag: (String) -> Unit,
     onSelect: (Article, List<Article>) -> Unit,
+    onEditArticleTags: (Article) -> Unit,
     onNavigateArticle: (Int) -> Unit,
     onToggleSave: () -> Unit,
     onFetchContent: () -> Unit,
@@ -263,9 +268,21 @@ fun ModernRssLayout(
                     RssScreen.Articles -> ArticlesDashboard(
                         articles = articles,
                         brandNewArticleIds = brandNewArticleIds,
+                        availableTags = availableTags,
+                        selectedTag = selectedTag,
                         query = query,
                         onQuery = onQuery,
+                        onTag = onTag,
                         onSelect = onSelect,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    RssScreen.Flow -> FlowDashboard(
+                        articles = articles,
+                        brandNewArticleIds = brandNewArticleIds,
+                        availableTags = availableTags,
+                        selectedTag = selectedTag,
+                        onTag = onTag,
+                        onOpen = onSelect,
                         modifier = Modifier.fillMaxSize(),
                     )
                     RssScreen.Reader -> ReaderDashboard(
@@ -279,14 +296,18 @@ fun ModernRssLayout(
                         onFetchContent = onFetchContent,
                         onFormatContent = onFormatContent,
                         onSummarize = onSummarize,
+                        onEditTags = onEditArticleTags,
                         onLoadSpeech = onLoadSpeech,
                         modifier = Modifier.fillMaxSize(),
                     )
                     RssScreen.Saved -> ArticlesDashboard(
                         articles = articles.filter { it.isSaved },
                         brandNewArticleIds = brandNewArticleIds,
+                        availableTags = availableTags,
+                        selectedTag = selectedTag,
                         query = query,
                         onQuery = onQuery,
+                        onTag = onTag,
                         onSelect = onSelect,
                         title = "Saved",
                         emptyTitle = "No saved articles yet",
@@ -376,7 +397,7 @@ fun ModernBottomBar(screen: RssScreen, onScreen: (RssScreen) -> Unit) {
         containerColor = RssColors.BottomBar,
         tonalElevation = 0.dp,
     ) {
-        val items = listOf(RssScreen.Feeds, RssScreen.Articles, RssScreen.Reader, RssScreen.Saved)
+        val items = listOf(RssScreen.Feeds, RssScreen.Articles, RssScreen.Flow, RssScreen.Reader, RssScreen.Saved)
         items.forEach { item ->
             NavigationBarItem(
                 selected = screen == item,
@@ -385,6 +406,7 @@ fun ModernBottomBar(screen: RssScreen, onScreen: (RssScreen) -> Unit) {
                     when (item) {
                         RssScreen.Feeds -> Icon(Icons.Default.Article, contentDescription = null)
                         RssScreen.Articles -> Icon(Icons.Default.Article, contentDescription = null)
+                        RssScreen.Flow -> Icon(Icons.Default.AutoAwesome, contentDescription = null)
                         RssScreen.Reader -> Icon(Icons.Default.Book, contentDescription = null)
                         RssScreen.Saved -> Icon(Icons.Default.BookmarkBorder, contentDescription = null)
                     }

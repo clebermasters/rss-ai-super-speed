@@ -4,7 +4,7 @@ import { isFreshlyPublished, publishedAgo } from '../freshness';
 import { plainDate, richTextToHtml } from '../render';
 import type { Article } from '../types';
 
-const props = defineProps<{ articles: Article[]; brandNewArticleIds: Set<string>; loading: boolean }>();
+const props = defineProps<{ articles: Article[]; brandNewArticleIds: Set<string>; loading: boolean; selectedTag: string }>();
 defineEmits<{
   focus: [article: Article];
   listen: [article: Article, target: 'content' | 'summary'];
@@ -51,9 +51,9 @@ onBeforeUnmount(() => observer?.disconnect());
   <section class="flow-page float-in">
     <header class="flow-hero">
       <div>
-        <p class="eyebrow">All Articles Flow</p>
+        <p class="eyebrow">{{ selectedTag ? `#${selectedTag} Flow` : 'All Articles Flow' }}</p>
         <h2>Scroll the river</h2>
-        <p>Articles render in generous reading cards as you move down the page. No article-list clicking required.</p>
+        <p>Articles render in generous reading cards as you move down the page. Tag filters apply before the river starts.</p>
       </div>
       <strong>{{ articles.length }} loaded</strong>
     </header>
@@ -75,6 +75,9 @@ onBeforeUnmount(() => observer?.disconnect());
           <span v-if="article.score">{{ article.score }} pts</span>
           <span v-if="article.isSaved">Saved</span>
           <span v-if="article.contentAiFormatted">AI formatted</span>
+        </div>
+        <div v-if="article.tags?.length" class="reader-tags compact-tags">
+          <span v-for="tag in article.tags.slice(0, 6)" :key="tag" class="tag-chip passive">#{{ tag }}</span>
         </div>
         <div class="rich-text compact flow-copy" v-html="articleBody(article)" />
         <footer>

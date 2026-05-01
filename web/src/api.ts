@@ -1,4 +1,4 @@
-import type { Article, ArticlesResponse, BootstrapResponse, FeedsResponse, FetchContentResponse, RefreshResponse, Settings, SpeechAudio, SpeechJobResponse, SpeechOptions } from './types';
+import type { Article, ArticlesResponse, BootstrapResponse, Feed, FeedsResponse, FeedUpdateRequest, FetchContentResponse, RefreshResponse, Settings, SpeechAudio, SpeechJobResponse, SpeechOptions, TagsResponse } from './types';
 
 export class RssApiError extends Error {
   constructor(message: string, public status = 0) {
@@ -17,11 +17,16 @@ export class RssApiClient {
     return this.request('GET', '/v1/feeds');
   }
 
-  articles(options: { query?: string; source?: string; saved?: boolean; unread?: boolean; limit?: number } = {}): Promise<ArticlesResponse> {
+  tags(): Promise<TagsResponse> {
+    return this.request('GET', '/v1/tags');
+  }
+
+  articles(options: { query?: string; source?: string; tag?: string; saved?: boolean; unread?: boolean; limit?: number } = {}): Promise<ArticlesResponse> {
     const params = new URLSearchParams();
     params.set('limit', String(options.limit || 100));
     if (options.query) params.set('query', options.query);
     if (options.source) params.set('source', options.source);
+    if (options.tag) params.set('tag', options.tag);
     if (options.saved) params.set('saved', 'true');
     if (options.unread) params.set('unread', 'true');
     return this.request('GET', `/v1/articles?${params.toString()}`);
@@ -29,6 +34,14 @@ export class RssApiClient {
 
   article(articleId: string): Promise<Article> {
     return this.request('GET', `/v1/articles/${encodeURIComponent(articleId)}`);
+  }
+
+  updateFeed(feedId: string, request: FeedUpdateRequest): Promise<Feed> {
+    return this.request('PUT', `/v1/feeds/${encodeURIComponent(feedId)}`, request);
+  }
+
+  updateArticle(articleId: string, updates: Partial<Pick<Article, 'tags'>>): Promise<Article> {
+    return this.request('PATCH', `/v1/articles/${encodeURIComponent(articleId)}`, updates);
   }
 
   refresh(): Promise<RefreshResponse> {

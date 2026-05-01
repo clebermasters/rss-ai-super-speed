@@ -278,11 +278,9 @@ async fn handle_action(app: &mut App, action: Action, action_tx: mpsc::Sender<Ac
 
                 match fetcher.fetch_with_fallbacks(&url).await {
                     Ok(raw_markdown) => {
-                        // AI formatting — auto-enabled when MINIMAX_API_KEY is set
-                        let markdown = if std::env::var("MINIMAX_API_KEY")
-                            .map(|k| !k.is_empty())
-                            .unwrap_or(false)
-                        {
+                        // AI formatting is auto-enabled when the selected provider is configured.
+                        let ai_model = crate::summarizer::default_ai_model();
+                        let markdown = if crate::summarizer::ai_available_for_model(&ai_model) {
                             if !is_prefetch {
                                 let _ = action_tx
                                     .send(Action::Info("Formatting content with AI…".to_string()))
@@ -290,8 +288,7 @@ async fn handle_action(app: &mut App, action: Action, action_tx: mpsc::Sender<Ac
                             }
                             let ai_config = crate::AiConfig {
                                 enabled: true,
-                                model: std::env::var("AI_MODEL")
-                                    .unwrap_or_else(|_| "MiniMax-M2.5-highspeed".to_string()),
+                                model: ai_model,
                                 temperature: 0.3,
                                 max_tokens: 4096,
                                 custom_prompt: None,
@@ -363,8 +360,7 @@ async fn handle_action(app: &mut App, action: Action, action_tx: mpsc::Sender<Ac
                 return;
             };
 
-            let model = std::env::var("AI_MODEL")
-                .unwrap_or_else(|_| "MiniMax-M2.5-highspeed".to_string());
+            let model = crate::summarizer::default_ai_model();
 
             tokio::spawn(async move {
                 let ai_config = AiConfig {

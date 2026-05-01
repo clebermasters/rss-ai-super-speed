@@ -1,8 +1,42 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue';
 import type { Feed } from '../types';
 
-defineProps<{ brandNewCount: number; collapsed: boolean; feeds: Feed[]; selectedFeedId: string; totalUnread: number }>();
-defineEmits<{ editTags: [feed: Feed]; select: [feedId: string]; toggle: [] }>();
+const props = defineProps<{ brandNewCount: number; collapsed: boolean; feeds: Feed[]; selectedFeedId: string; totalUnread: number }>();
+const emit = defineEmits<{ editTags: [feed: Feed]; select: [feedId: string]; toggle: [] }>();
+
+const feedQuery = ref('');
+const normalizedFeedQuery = computed(() => normalizeSearch(feedQuery.value));
+const filteringFeeds = computed(() => Boolean(normalizedFeedQuery.value));
+const visibleFeeds = computed(() => {
+  const query = normalizedFeedQuery.value;
+  if (!query) return props.feeds;
+  return props.feeds.filter((feed) => searchableFeedText(feed).includes(query));
+});
+
+function normalizeSearch(value: string): string {
+  return value.trim().toLowerCase().replace(/^#/, '').replace(/\s+/g, ' ');
+}
+
+function feedInitials(feed: Feed): string {
+  return feed.name
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join('')
+    .slice(0, 4)
+    .toLowerCase();
+}
+
+function searchableFeedText(feed: Feed): string {
+  return normalizeSearch(`${feed.name} ${feed.url} ${(feed.tags || []).join(' ')} ${feedInitials(feed)} ${feed.name.slice(0, 2)}`);
+}
+
+function selectOnlyMatch(): void {
+  if (visibleFeeds.value.length === 1) {
+    emit('select', visibleFeeds.value[0].feedId);
+  }
+}
 </script>
 
 <template>
@@ -14,7 +48,13 @@ defineEmits<{ editTags: [feed: Feed]; select: [feedId: string]; toggle: [] }>();
       </span>
       <button class="collapse-button" @click="$emit('toggle')">{{ collapsed ? '→' : '←' }}</button>
     </div>
-    <button class="feed-card all" :class="{ active: selectedFeedId === '' }" :title="`All Articles · ${totalUnread} unread`" @click="$emit('select', '')">
+    <label v-if="!collapsed" class="feed-filter" aria-label="Filter subscriptions">
+      <span>⌕</span>
+      <input v-model="feedQuery" placeholder="Filter sources..." type="search" @keydown.enter="selectOnlyMatch" />
+      <small v-if="filteringFeeds">{{ visibleFeeds.length }}</small>
+      <button v-if="filteringFeeds" type="button" aria-label="Clear source filter" @click="feedQuery = ''">×</button>
+    </label>
+    <button v-if="!filteringFeeds" class="feed-card all" :class="{ active: selectedFeedId === '' }" :title="`All Articles · ${totalUnread} unread`" @click="$emit('select', '')">
       <span class="feed-glyph">✦</span>
       <span class="feed-text">
         <strong>All Articles</strong>
@@ -22,7 +62,7 @@ defineEmits<{ editTags: [feed: Feed]; select: [feedId: string]; toggle: [] }>();
       </span>
     </button>
     <div
-      v-for="feed in feeds"
+      v-for="feed in visibleFeeds"
       :key="feed.feedId"
       class="feed-card"
       :class="{ active: selectedFeedId === feed.feedId }"
@@ -42,5 +82,6 @@ defineEmits<{ editTags: [feed: Feed]; select: [feedId: string]; toggle: [] }>();
       </span>
       <button v-if="!collapsed" class="mini-tag-button" @click.stop="$emit('editTags', feed)">Tags</button>
     </div>
+    <p v-if="!collapsed && filteringFeeds && !visibleFeeds.length" class="feed-filter-empty">No matching sources.</p>
   </aside>
 </template>

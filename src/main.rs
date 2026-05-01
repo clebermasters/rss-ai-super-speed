@@ -421,8 +421,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("\n--- AI-formatted content (MINIMAX_API_KEY detected) ---");
                     let ai_config = rss_ai::AiConfig {
                         enabled: true,
-                        model: std::env::var("AI_MODEL")
-                            .unwrap_or_else(|_| "MiniMax-M2.5-highspeed".to_string()),
+                        model: rss_ai::summarizer::default_ai_model(),
                         temperature: 0.3,
                         max_tokens: 4096,
                         custom_prompt: None,

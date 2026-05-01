@@ -3,6 +3,7 @@ use thiserror::Error;
 
 pub mod fetcher;
 pub mod fetcher_html;
+pub mod codex_provider;
 pub mod filter;
 pub mod search;
 pub mod summarizer;

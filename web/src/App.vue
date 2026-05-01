@@ -114,9 +114,9 @@ function saveTags(tags: string[]): void {
 
     <TagFilterBar
       v-else
-      :selected-tag="reader.selectedTag.value"
+      :selected-tags="reader.selectedTags.value"
       :tags="reader.availableTags.value"
-      @select="reader.setTag"
+      @select="reader.setTags"
     />
 
     <InfiniteArticleFlow
@@ -124,7 +124,7 @@ function saveTags(tags: string[]): void {
       :articles="reader.articles.value"
       :brand-new-article-ids="reader.brandNewArticleIds.value"
       :loading="reader.loading.value"
-      :selected-tag="reader.selectedTag.value"
+      :selected-tag="reader.selectedTags.value.join(', ')"
       @focus="focusFlowArticle"
       @listen="listenFlowArticle"
       @open="openFlowArticle"

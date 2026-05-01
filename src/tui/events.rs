@@ -1,13 +1,15 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::tui::app::{Action, App, Mode, Panel};
+use crate::{
+    summarizer,
+    tui::app::{Action, App, Mode, Panel},
+};
 
 /// Auto-fetch content and summary for the current article if missing,
 /// and silently prefetch content for the article 3 positions ahead.
 async fn schedule_prefetch(app: &mut App) {
-    let has_minimax = std::env::var("MINIMAX_API_KEY")
-        .map(|k| !k.is_empty())
-        .unwrap_or(false);
+    let ai_model = summarizer::default_ai_model();
+    let has_ai = summarizer::ai_available_for_model(&ai_model);
 
     // ── Current article: auto-fetch content if missing ────────────────────
     if let Some(id) = app.prefetch_target(0) {
@@ -16,7 +18,7 @@ async fn schedule_prefetch(app: &mut App) {
     }
 
     // ── Current article: auto-summarize if missing (needs AI key) ─────────
-    if has_minimax {
+    if has_ai {
         let sum_key_and_id = app
             .filtered_indices
             .get(app.selected_article)

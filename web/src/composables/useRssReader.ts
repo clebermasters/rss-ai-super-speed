@@ -64,7 +64,7 @@ export function useRssReader() {
   const articles = ref<Article[]>([]);
   const brandNewArticleIds = ref<Set<string>>(new Set());
   const selectedFeedId = ref('');
-  const selectedTag = ref('');
+  const selectedTags = ref<string[]>([]);
   const selectedArticle = ref<Article | null>(null);
   const query = ref('');
   const filter = ref<ArticleFilter>('all');
@@ -88,6 +88,7 @@ export function useRssReader() {
   const totalUnread = computed(() => feeds.value.reduce((sum, feed) => sum + Number(feed.unreadCount || 0), 0));
   const brandNewCount = computed(() => brandNewArticleIds.value.size);
   const selectedFeed = computed(() => feeds.value.find((feed) => feed.feedId === selectedFeedId.value) || null);
+  const selectedTag = computed(() => selectedTags.value[0] || '');
   const activeSettings = computed(() => settings.value || defaultSettings());
   const availableTags = computed(() => {
     const counts = new Map<string, { tag: string; feedCount: number; articleCount: number; unreadCount: number }>();
@@ -142,15 +143,28 @@ export function useRssReader() {
     if (!configured.value) return;
     loading.value = true;
     try {
-      const data = await client().articles({
+      const limit = boundedNumber(activeSettings.value.defaultArticleLimit, 50, 1, 1000);
+      const baseOptions = {
         query: query.value.trim() || undefined,
         source: selectedFeedId.value || undefined,
-        tag: selectedTag.value || undefined,
         unread: filter.value === 'unread',
         saved: filter.value === 'saved',
-        limit: boundedNumber(activeSettings.value.defaultArticleLimit, 50, 1, 1000),
-      });
-      articles.value = data.articles || [];
+        limit,
+      };
+      const activeTags = selectedTags.value;
+      let loadedArticles: Article[] = [];
+      if (activeTags.length <= 1) {
+        const data = await client().articles({ ...baseOptions, tag: activeTags[0] || undefined });
+        loadedArticles = data.articles || [];
+      } else {
+        const responses = await Promise.all(activeTags.map((tag) => client().articles({ ...baseOptions, tag })));
+        const merged = new Map<string, Article>();
+        for (const response of responses) {
+          for (const article of response.articles || []) merged.set(article.articleId, article);
+        }
+        loadedArticles = [...merged.values()].sort(compareArticlesByRecency).slice(0, limit);
+      }
+      articles.value = loadedArticles;
       brandNewArticleIds.value = detectBrandNewArticleIds(articles.value);
       const currentId = selectedArticle.value?.articleId;
       const next = options.preserveSelection
@@ -347,7 +361,11 @@ export function useRssReader() {
   }
 
   function setTag(tag: string): void {
-    selectedTag.value = normalizeTags(tag)[0] || '';
+    setTags(tag ? [tag] : []);
+  }
+
+  function setTags(tags: string[]): void {
+    selectedTags.value = normalizeTags(tags);
   }
 
   async function updateFeedTags(feed: Feed, tags: string[]): Promise<void> {
@@ -474,7 +492,7 @@ export function useRssReader() {
   }
 
   watch(query, scheduleLoadArticles);
-  watch([selectedFeedId, selectedTag, filter], () => void loadArticles({ preserveSelection: false }));
+  watch([selectedFeedId, selectedTags, filter], () => void loadArticles({ preserveSelection: false }));
   onMounted(() => void initialize());
 
   return {
@@ -505,9 +523,11 @@ export function useRssReader() {
     selectedArticle,
     selectedFeed,
     selectedFeedId,
+    selectedTags,
     setFeed,
     selectedTag,
     setTag,
+    setTags,
     setSpeechSegmentIndex,
     setSpeechSegmentPercent,
     settings,
@@ -531,6 +551,16 @@ export function useRssReader() {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function compareArticlesByRecency(left: Article, right: Article): number {
+  return articleTimestamp(right) - articleTimestamp(left);
+}
+
+function articleTimestamp(article: Article): number {
+  const published = Date.parse(article.publishedAt || '');
+  if (Number.isFinite(published)) return published;
+  return Number(article.updatedAt || article.fetchedAt || 0);
 }
 
 function loadStoredInt(key: string, fallback: number): number {

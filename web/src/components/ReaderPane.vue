@@ -40,6 +40,8 @@ defineEmits<{
 
 const audioElement = ref<HTMLAudioElement | null>(null);
 const audioPlaybackError = ref('');
+const summaryExpanded = ref(true);
+const audioReaderExpanded = ref(false);
 const busy = computed(() => Boolean(props.busyAction));
 const summaryHtml = computed(() => richTextToHtml(props.article?.summary || ''));
 const contentHtml = computed(() => richTextToHtml(props.article?.content || props.article?.contentPreview || ''));
@@ -67,6 +69,14 @@ watch(
     } catch {
       audioPlaybackError.value = 'Browser autoplay was blocked. Press play in the audio controls.';
     }
+  },
+);
+
+watch(
+  () => props.article?.articleId,
+  () => {
+    summaryExpanded.value = true;
+    audioReaderExpanded.value = false;
   },
 );
 </script>
@@ -118,43 +128,45 @@ watch(
       <div class="reader-primary-actions">
         <button :disabled="!canReadText" @click="$emit('rsvp', 'word-runner')">
           <span>Word Runner</span>
-          <small>Fast reader with Spritz mode inside</small>
         </button>
         <button :disabled="busy || !canListenContent" @click="$emit('playSpeech', 'content')">
           <span>{{ busyAction === 'Creating article audio' ? 'Creating...' : 'Listen Article' }}</span>
-          <small>Part {{ speechSegmentIndex + 1 }} / {{ speechSegmentCount }}</small>
         </button>
         <button :disabled="busy || !article.summary" @click="$emit('playSpeech', 'summary')">
           <span>{{ busyAction === 'Creating summary audio' ? 'Creating...' : 'Listen Summary' }}</span>
-          <small>AI summary</small>
         </button>
       </div>
 
-      <section class="speech-card">
-        <div>
-          <strong>Audio reader</strong>
-          <small>Cached by segment in the browser and in S3. Generate 20%, 30%, or all content.</small>
+      <section class="speech-card collapsible-card" :class="{ collapsed: !audioReaderExpanded }">
+        <button class="collapsible-card-header" @click="audioReaderExpanded = !audioReaderExpanded">
+          <span>
+            <strong>Audio reader</strong>
+            <small>Segments, cache, and regeneration controls.</small>
+          </span>
+          <b>{{ audioReaderExpanded ? 'Hide' : 'Show' }}</b>
+        </button>
+        <div v-if="audioReaderExpanded" class="collapsible-card-body">
+          <div class="speech-segments">
+            <button :class="{ active: speechSegmentPercent === 20 }" @click="$emit('setSpeechSegmentPercent', 20)">20%</button>
+            <button :class="{ active: speechSegmentPercent === 30 }" @click="$emit('setSpeechSegmentPercent', 30)">30%</button>
+            <button :class="{ active: speechSegmentPercent === 100 }" @click="$emit('setSpeechSegmentPercent', 100)">All</button>
+          </div>
+          <div class="speech-row">
+            <span>{{ speechSegmentPercent === 100 ? 'Article: all content' : `Article part ${speechSegmentIndex + 1} of ${speechSegmentCount}` }}</span>
+            <button :disabled="speechSegmentIndex <= 0 || busy" @click="$emit('setSpeechSegmentIndex', speechSegmentIndex - 1)">Prev</button>
+            <button :disabled="speechSegmentIndex >= speechSegmentCount - 1 || busy" @click="$emit('setSpeechSegmentIndex', speechSegmentIndex + 1)">Next</button>
+          </div>
+          <div class="speech-row">
+            <button :disabled="busy || !canListenContent" @click="$emit('playSpeech', 'content')">{{ busyAction === 'Creating article audio' ? 'Creating article...' : 'Read Article Part' }}</button>
+            <button :disabled="busy || !article.summary" @click="$emit('playSpeech', 'summary')">{{ busyAction === 'Creating summary audio' ? 'Creating summary...' : 'Read Summary' }}</button>
+            <button :disabled="busy || !canListenContent" @click="$emit('regenerateSpeech', 'content')">Regenerate Part</button>
+          </div>
+          <p v-if="speechCacheStatus || speechInputChars" class="speech-meta">
+            {{ speechCacheStatus ? `${speechCacheStatus} cache` : 'cache status pending' }}
+            <span v-if="speechInputChars"> · {{ speechInputChars }} chars sent</span>
+            <span v-if="speechSourceChars"> · {{ speechSourceChars }} readable chars total</span>
+          </p>
         </div>
-        <div class="speech-segments">
-          <button :class="{ active: speechSegmentPercent === 20 }" @click="$emit('setSpeechSegmentPercent', 20)">20%</button>
-          <button :class="{ active: speechSegmentPercent === 30 }" @click="$emit('setSpeechSegmentPercent', 30)">30%</button>
-          <button :class="{ active: speechSegmentPercent === 100 }" @click="$emit('setSpeechSegmentPercent', 100)">All</button>
-        </div>
-        <div class="speech-row">
-          <span>{{ speechSegmentPercent === 100 ? 'Article: all content' : `Article part ${speechSegmentIndex + 1} of ${speechSegmentCount}` }}</span>
-          <button :disabled="speechSegmentIndex <= 0 || busy" @click="$emit('setSpeechSegmentIndex', speechSegmentIndex - 1)">Prev</button>
-          <button :disabled="speechSegmentIndex >= speechSegmentCount - 1 || busy" @click="$emit('setSpeechSegmentIndex', speechSegmentIndex + 1)">Next</button>
-        </div>
-        <div class="speech-row">
-          <button :disabled="busy || !canListenContent" @click="$emit('playSpeech', 'content')">{{ busyAction === 'Creating article audio' ? 'Creating article...' : 'Read Article Part' }}</button>
-          <button :disabled="busy || !article.summary" @click="$emit('playSpeech', 'summary')">{{ busyAction === 'Creating summary audio' ? 'Creating summary...' : 'Read Summary' }}</button>
-          <button :disabled="busy || !canListenContent" @click="$emit('regenerateSpeech', 'content')">Regenerate Part</button>
-        </div>
-        <p v-if="speechCacheStatus || speechInputChars" class="speech-meta">
-          {{ speechCacheStatus ? `${speechCacheStatus} cache` : 'cache status pending' }}
-          <span v-if="speechInputChars"> · {{ speechInputChars }} chars sent</span>
-          <span v-if="speechSourceChars"> · {{ speechSourceChars }} readable chars total</span>
-        </p>
       </section>
 
       <section v-if="audioUrl" class="audio-card">
@@ -172,12 +184,17 @@ watch(
         <p v-if="audioPlaybackError" class="speech-error">{{ audioPlaybackError }}</p>
       </section>
 
-      <section v-if="summaryHtml" class="summary-card">
-        <div class="card-title">
-          <span>✦</span>
-          <strong>AI Summary</strong>
+      <section v-if="summaryHtml" class="summary-card collapsible-card" :class="{ collapsed: !summaryExpanded }">
+        <button class="collapsible-card-header summary-toggle" @click="summaryExpanded = !summaryExpanded">
+          <span class="card-title">
+            <span>✦</span>
+            <strong>AI Summary</strong>
+          </span>
+          <b>{{ summaryExpanded ? 'Hide' : 'Show' }}</b>
+        </button>
+        <div v-if="summaryExpanded" class="collapsible-card-body">
+          <div class="rich-text compact" v-html="summaryHtml" />
         </div>
-        <div class="rich-text compact" v-html="summaryHtml" />
       </section>
 
       <div class="reader-toolbar">
@@ -187,7 +204,7 @@ watch(
       </div>
 
       <p v-if="settings.aiContentFormattingEnabled" class="format-hint">
-        Mobile AI formatting is enabled. Fetch Full will queue formatting automatically when needed.
+        AI formatting enabled.
       </p>
 
       <section class="content-card">

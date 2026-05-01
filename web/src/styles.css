@@ -351,7 +351,25 @@ h2 {
   gap: 10px;
   padding: 16px;
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: rgba(207, 95, 45, 0.48) rgba(255, 252, 244, 0.35);
+  scrollbar-width: thin;
   transition: padding 180ms ease;
+}
+
+.feed-rail::-webkit-scrollbar {
+  width: 10px;
+}
+
+.feed-rail::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: rgba(255, 252, 244, 0.36);
+}
+
+.feed-rail::-webkit-scrollbar-thumb {
+  border: 2px solid rgba(255, 252, 244, 0.7);
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-2));
 }
 
 .rail-tools {
@@ -687,7 +705,7 @@ h2 {
 .reader-primary-actions button,
 .reader-toolbar button {
   border-radius: 999px;
-  padding: 11px 15px;
+  padding: 9px 13px;
   font-weight: 700;
 }
 
@@ -747,23 +765,23 @@ h2 {
 }
 
 .reader-primary-actions {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(130px, 1fr));
-  gap: 12px;
-  margin: 2px 0 18px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 2px 0 12px;
 }
 
 .reader-primary-actions button {
-  display: grid;
-  gap: 5px;
-  min-height: 82px;
-  align-content: center;
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  min-height: 42px;
   border: 1px solid var(--line);
-  border-radius: 22px;
+  border-radius: 999px;
+  padding: 8px 13px;
   color: var(--ink);
-  text-align: left;
   background: rgba(255, 252, 244, 0.78);
-  box-shadow: 0 16px 42px rgba(72, 49, 26, 0.08);
+  box-shadow: 0 8px 22px rgba(72, 49, 26, 0.06);
 }
 
 .reader-primary-actions button:nth-child(2),
@@ -774,41 +792,50 @@ h2 {
 }
 
 .reader-primary-actions span {
-  font-size: 1.03rem;
+  font-size: 0.96rem;
 }
 
 .reader-primary-actions small {
   color: var(--muted);
+  font-size: 0.78rem;
   font-weight: 700;
 }
 
 .speech-card {
-  display: grid;
-  gap: 12px;
-  margin: 16px 0;
-  padding: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin: 12px 0;
+  padding: 12px;
   border: 1px solid rgba(38, 115, 93, 0.16);
-  border-radius: var(--radius-lg);
+  border-radius: 22px;
   background: linear-gradient(135deg, rgba(38, 115, 93, 0.08), rgba(255, 252, 244, 0.88));
+}
+
+.speech-card > div:first-child {
+  flex: 1 1 260px;
 }
 
 .speech-card strong,
 .audio-card strong {
   display: block;
   color: var(--ink);
+  font-size: 0.96rem;
 }
 
 .speech-card small,
 .audio-card small,
 .speech-meta {
   color: var(--muted);
+  font-size: 0.82rem;
 }
 
 .speech-segments,
 .speech-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
 }
 
@@ -816,9 +843,10 @@ h2 {
 .speech-row button {
   border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 9px 13px;
+  padding: 7px 11px;
   color: var(--ink);
   background: rgba(255, 252, 244, 0.78);
+  font-size: 0.9rem;
   font-weight: 800;
 }
 
@@ -830,8 +858,9 @@ h2 {
 }
 
 .speech-row span {
-  margin-right: auto;
+  margin-right: 4px;
   color: var(--muted);
+  font-size: 0.9rem;
   font-weight: 800;
 }
 
@@ -885,9 +914,10 @@ h2 {
 
 .audio-card {
   display: grid;
-  gap: 10px;
-  margin: 16px 0;
-  padding: 16px;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 12px;
+  border-radius: 22px;
 }
 
 .audio-card audio {

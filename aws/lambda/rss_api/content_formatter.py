@@ -20,12 +20,15 @@ Remove only obvious navigation, duplicated boilerplate, cookie prompts, newslett
 
 Return clean Markdown optimized for mobile reading:
 - Always improve visual structure when the input is flat text; do not return an unchanged plain-text block.
+- Do not repeat the article title as the first heading.
+- Do not use Markdown H1 headings. Use concise `##` section headings and occasional `###` subheadings only.
+- Keep headings short, usually 3 to 7 words.
 - Short paragraphs of 1 to 3 sentences.
 - Clear, neutral section headings where the source text supports a topic transition.
 - Put exactly one tasteful emoji at the start of each major heading, chosen from the section meaning.
 - Add one blank line before every heading and one blank line after every heading.
 - Add one blank line between paragraphs and around bullet lists so the article breathes on a phone screen.
-- Bullet lists only when the source text is already list-like or clearly enumerates items.
+- Bullet or numbered lists when the source text is already list-like or clearly enumerates items; do not turn every list item into a heading.
 - Use **bold** sparingly for important names, terms, and takeaways already present in the text.
 - Use *italic* sparingly for source notes or emphasis already present in the text.
 - Keep links as Markdown links when URLs are present.
@@ -103,11 +106,15 @@ Reformat this article text for comfortable mobile reading.
 
 Make the transformation visible:
 - Split dense or flat text into short paragraphs.
-- Add source-supported Markdown headings for topic changes, each starting with one meaningful emoji.
+- Add source-supported Markdown `##` headings for topic changes, each starting with one meaningful emoji.
+- Do not repeat the article title as a heading, because the app already displays the title.
+- Never use `#` H1 headings in the body.
+- Keep headings compact; if a section title is longer than 8 words, make it a paragraph or list item instead.
 - Surround each heading with generous whitespace: one blank line before it and one blank line after it.
 - Add extra breathing room between sections, paragraphs, and lists.
 - Use **bold** and *italic* when they improve scanability without changing meaning.
 - Prefer readable Markdown such as `## 🧭 Context`, `## ⚖️ What happened`, `## 🔎 Why it matters`, but only when those sections are supported by the article.
+- If the article has steps, render them as a numbered list with bold labels, not as large headings.
 - Preserve links, quotes, numbers, names, and details.
 - Do not summarize, shorten, rewrite opinions, or add new information.
 - Do not return the same unstructured text unless the input is already cleanly formatted.

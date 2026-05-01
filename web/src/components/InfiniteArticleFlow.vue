@@ -24,7 +24,26 @@ function showMore(): void {
 }
 
 function articleBody(article: Article): string {
-  return richTextToHtml(article.content || article.contentPreview || article.summary || 'No preview is available yet. Open the article to fetch full content.');
+  const html = richTextToHtml(article.content || article.contentPreview || article.summary || 'No preview is available yet. Open the article to fetch full content.');
+  return removeDuplicateOpeningHeading(html, article.title);
+}
+
+function removeDuplicateOpeningHeading(html: string, title: string): string {
+  const titleKey = normalizeHeadingText(title);
+  if (!titleKey) return html;
+  return html.replace(/^\s*<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>\s*/i, (match, heading: string) => {
+    const headingKey = normalizeHeadingText(heading.replace(/<[^>]+>/g, ''));
+    if (!headingKey) return match;
+    return titleKey === headingKey || titleKey.includes(headingKey) || headingKey.includes(titleKey) ? '' : match;
+  });
+}
+
+function normalizeHeadingText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 watch(
@@ -81,12 +100,12 @@ onBeforeUnmount(() => observer?.disconnect());
         </div>
         <div class="rich-text compact flow-copy" v-html="articleBody(article)" />
         <footer>
-          <a :href="article.link" target="_blank" rel="noreferrer">Open source ↗</a>
-          <button @click="$emit('rsvp', article, 'word-runner')">Word Runner</button>
-          <button @click="$emit('listen', article, 'content')">Listen</button>
-          <button :disabled="!article.summary" @click="$emit('listen', article, 'summary')">Summary Audio</button>
-          <button @click="$emit('open', article)">Open side reader</button>
-          <button @click="$emit('focus', article)">Full screen reading</button>
+          <a class="flow-action neutral" :href="article.link" target="_blank" rel="noreferrer">Source ↗</a>
+          <button class="flow-action read" @click="$emit('rsvp', article, 'word-runner')">Word Runner</button>
+          <button class="flow-action audio" @click="$emit('listen', article, 'content')">Listen</button>
+          <button class="flow-action audio secondary" :disabled="!article.summary" @click="$emit('listen', article, 'summary')">Summary</button>
+          <button class="flow-action neutral" @click="$emit('open', article)">Side reader</button>
+          <button class="flow-action focus" @click="$emit('focus', article)">Focus</button>
         </footer>
       </div>
     </article>

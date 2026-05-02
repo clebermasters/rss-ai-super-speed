@@ -18,6 +18,43 @@ class FakeTable:
     def query(self, **_: object) -> dict:
         return {"Items": self.items}
 
+    def put_item(self, Item: dict, **_: object) -> None:
+        key = (Item["pk"], Item["sk"])
+        self.items = [item for item in self.items if (item.get("pk"), item.get("sk")) != key]
+        self.items.append(dict(Item))
+
+
+class ArticleWriteFakeTable:
+    def __init__(self) -> None:
+        self.items: dict[tuple[str, str], dict] = {
+            ("USER#default", "FEED#feed-a"): {
+                "pk": "USER#default",
+                "sk": "FEED#feed-a",
+                "feedId": "feed-a",
+                "articleCount": 0,
+                "unreadCount": 0,
+                "feedCountVersion": 1,
+            }
+        }
+
+    def put_item(self, Item: dict, **kwargs: object) -> None:
+        key = (Item["pk"], Item["sk"])
+        if kwargs.get("ConditionExpression") and key in self.items:
+            from botocore.exceptions import ClientError
+
+            raise ClientError({"Error": {"Code": "ConditionalCheckFailedException"}}, "PutItem")
+        self.items[key] = dict(Item)
+
+    def update_item(self, Key: dict, ExpressionAttributeValues: dict, **_: object) -> None:
+        item = self.items.setdefault((Key["pk"], Key["sk"]), {"pk": Key["pk"], "sk": Key["sk"]})
+        item["feedCountVersion"] = ExpressionAttributeValues[":version"]
+        item["feedCountsUpdatedAt"] = ExpressionAttributeValues[":updated"]
+        item["articleCount"] = int(item.get("articleCount") or 0) + int(ExpressionAttributeValues.get(":total") or 0)
+        item["unreadCount"] = int(item.get("unreadCount") or 0) + int(ExpressionAttributeValues.get(":unread") or 0)
+
+    def query(self, **_: object) -> dict:
+        return {"Items": [dict(item) for item in self.items.values()]}
+
 
 class ContentCacheFakeTable:
     def __init__(self) -> None:
@@ -123,7 +160,7 @@ class StorageFeedCountsTest(unittest.TestCase):
             },
         )
 
-    def test_list_feeds_returns_dynamic_counts_instead_of_stored_zeroes(self) -> None:
+    def test_list_feeds_rebuilds_counts_once_when_version_is_missing(self) -> None:
         storage = RssStorage.__new__(RssStorage)
         storage.table = FakeTable(
             [
@@ -156,6 +193,76 @@ class StorageFeedCountsTest(unittest.TestCase):
             [(feed["feedId"], feed["articleCount"], feed["unreadCount"]) for feed in feeds],
             [("feed-a", 7, 3), ("feed-b", 2, 0)],
         )
+        self.assertTrue(all(feed["feedCountVersion"] == 1 for feed in feeds))
+
+    def test_list_feeds_uses_persisted_counts_when_version_is_current(self) -> None:
+        storage = RssStorage.__new__(RssStorage)
+        storage.table = FakeTable(
+            [
+                {
+                    "pk": "USER#default",
+                    "sk": "FEED#feed-a",
+                    "feedId": "feed-a",
+                    "name": "Feed A",
+                    "articleCount": 4,
+                    "unreadCount": 2,
+                    "feedCountVersion": 1,
+                },
+            ]
+        )
+        storage._feed_article_counts = lambda: (_ for _ in ()).throw(AssertionError("counts should not be recomputed"))
+
+        feeds = storage.list_feeds()
+
+        self.assertEqual(feeds[0]["articleCount"], 4)
+        self.assertEqual(feeds[0]["unreadCount"], 2)
+
+    def test_save_articles_records_sync_ledger_and_increments_feed_counts(self) -> None:
+        storage = RssStorage.__new__(RssStorage)
+        storage.table = ArticleWriteFakeTable()
+
+        result = storage.save_articles_detailed(
+            [
+                {
+                    "articleId": "a1",
+                    "title": "New article",
+                    "link": "https://example.test/a1",
+                    "sourceFeedId": "feed-a",
+                    "publishedEpoch": 1000,
+                    "tags": ["ai"],
+                }
+            ]
+        )
+
+        self.assertEqual(result["saved"], 1)
+        feed = storage.table.items[("USER#default", "FEED#feed-a")]
+        self.assertEqual(feed["articleCount"], 1)
+        self.assertEqual(feed["unreadCount"], 1)
+        sync_items = [item for (pk, _), item in storage.table.items.items() if pk == "USER#default#SYNC"]
+        self.assertEqual(len(sync_items), 1)
+        self.assertEqual(sync_items[0]["article"]["articleId"], "a1")
+
+    def test_pull_article_changes_uses_sync_ledger_for_warm_cache(self) -> None:
+        storage = RssStorage.__new__(RssStorage)
+        storage.table = FakeTable(
+            [
+                {
+                    "pk": "USER#default#SYNC",
+                    "sk": "0000000002000#ARTICLE#a1",
+                    "articleId": "a1",
+                    "updatedAt": 2000,
+                    "deleted": False,
+                    "article": {"articleId": "a1", "title": "Changed", "updatedAt": 2000},
+                }
+            ]
+        )
+        storage.list_articles = lambda _filters=None: (_ for _ in ()).throw(AssertionError("warm sync should not read article list"))
+
+        result = storage.pull_article_changes(1000, cursor=3000)
+
+        self.assertEqual(result["syncSource"], "ledger")
+        self.assertEqual([article["articleId"] for article in result["articles"]], ["a1"])
+        self.assertEqual(result["changes"], 1)
 
     def test_list_articles_follows_dynamodb_pagination(self) -> None:
         storage = RssStorage.__new__(RssStorage)

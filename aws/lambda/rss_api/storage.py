@@ -14,7 +14,10 @@ from botocore.exceptions import ClientError
 
 USER_PK = "USER#default"
 ARTICLES_GSI_PK = "USER#default#ARTICLES"
+SYNC_PK = "USER#default#SYNC"
 DEFAULT_ARTICLE_CONTENT_CACHE_TTL_DAYS = 30
+FEED_COUNT_VERSION = 1
+SYNC_LEDGER_TTL_DAYS = 90
 
 
 def now_ms() -> int:
@@ -83,6 +86,10 @@ def content_cache_expired(article: dict[str, Any] | None) -> bool:
         return False
     expires_at = int(article.get("contentExpiresAt") or 0)
     return bool(expires_at and expires_at <= int(time.time()))
+
+
+def sync_ledger_expires_at() -> int:
+    return int(time.time()) + SYNC_LEDGER_TTL_DAYS * 24 * 60 * 60
 
 
 class RssStorage:
@@ -249,6 +256,8 @@ class RssStorage:
             "lastFetchDurationMs": int(payload.get("lastFetchDurationMs") or 0),
             "articleCount": int(payload.get("articleCount") or 0),
             "unreadCount": int(payload.get("unreadCount") or 0),
+            "feedCountVersion": FEED_COUNT_VERSION,
+            "feedCountsUpdatedAt": now_ms(),
             "createdAt": int(payload.get("createdAt") or now_ms()),
             "updatedAt": now_ms(),
         }
@@ -260,11 +269,8 @@ class RssStorage:
             KeyConditionExpression=Key("pk").eq(USER_PK) & Key("sk").begins_with("FEED#")
         )
         feeds = [self._strip_keys(item) for item in response.get("Items", [])]
-        counts = self._feed_article_counts()
-        for feed in feeds:
-            feed_counts = counts.get(str(feed.get("feedId") or ""), {"total": 0, "unread": 0})
-            feed["articleCount"] = int(feed_counts["total"])
-            feed["unreadCount"] = int(feed_counts["unread"])
+        if any(int(feed.get("feedCountVersion") or 0) != FEED_COUNT_VERSION for feed in feeds):
+            self.rebuild_feed_counts(feeds)
         feeds.sort(key=lambda item: item.get("name", "").lower())
         return feeds
 
@@ -278,6 +284,24 @@ class RssStorage:
             feed_counts["total"] += 1
             if not article.get("isRead"):
                 feed_counts["unread"] += 1
+        return counts
+
+    def rebuild_feed_counts(self, feeds: list[dict[str, Any]] | None = None) -> dict[str, dict[str, int]]:
+        counts = self._feed_article_counts()
+        if feeds is None:
+            response = self.table.query(
+                KeyConditionExpression=Key("pk").eq(USER_PK) & Key("sk").begins_with("FEED#")
+            )
+            feeds = [self._strip_keys(item) for item in response.get("Items", [])]
+        updated_at = now_ms()
+        for feed in feeds:
+            feed_id = str(feed.get("feedId") or "")
+            feed_counts = counts.get(feed_id, {"total": 0, "unread": 0})
+            feed["articleCount"] = int(feed_counts["total"])
+            feed["unreadCount"] = int(feed_counts["unread"])
+            feed["feedCountVersion"] = FEED_COUNT_VERSION
+            feed["feedCountsUpdatedAt"] = updated_at
+            self.table.put_item(Item=_clean({"pk": USER_PK, "sk": f"FEED#{feed_id}", **feed}))
         return counts
 
     def get_feed(self, feed_id: str) -> dict[str, Any] | None:
@@ -360,11 +384,73 @@ class RssStorage:
                 if source_feed_id:
                     feed_key = str(source_feed_id)
                     saved_by_feed[feed_key] = saved_by_feed.get(feed_key, 0) + 1
+                    self._increment_feed_counts(feed_key, total_delta=1, unread_delta=0 if item["isRead"] else 1)
+                self._record_article_sync(item)
             except ClientError as exc:
                 if exc.response.get("Error", {}).get("Code") != "ConditionalCheckFailedException":
                     raise
                 duplicate_count += 1
         return {"saved": saved, "duplicates": duplicate_count, "savedByFeed": saved_by_feed}
+
+    def pull_article_changes(self, since: int, limit: int = 1000, cursor: int | None = None) -> dict[str, Any]:
+        limit = max(1, min(int(limit or 1000), 1000))
+        cursor = int(cursor or now_ms())
+        if int(since or 0) <= 0:
+            articles = self.list_articles({"limit": min(limit, 500)})
+            return {
+                "cursor": cursor,
+                "articles": articles,
+                "deletions": [],
+                "syncSource": "snapshot",
+                "changes": len(articles),
+                "hasMore": False,
+            }
+
+        start_key = f"{int(since) + 1:013d}"
+        end_key = f"{cursor:013d}~"
+        changes: list[dict[str, Any]] = []
+        last_key = None
+        has_more = False
+        while len(changes) < limit:
+            query_args: dict[str, Any] = {
+                "KeyConditionExpression": Key("pk").eq(SYNC_PK) & Key("sk").between(start_key, end_key),
+                "ScanIndexForward": True,
+                "Limit": limit - len(changes),
+            }
+            if last_key:
+                query_args["ExclusiveStartKey"] = last_key
+            response = self.table.query(**query_args)
+            changes.extend(self._strip_keys(item) for item in response.get("Items", []))
+            last_key = response.get("LastEvaluatedKey")
+            if not last_key:
+                break
+            if len(changes) >= limit:
+                has_more = True
+                break
+
+        by_article: dict[str, dict[str, Any]] = {}
+        deletions: set[str] = set()
+        for change in changes:
+            article_id = str(change.get("articleId") or "")
+            if not article_id:
+                continue
+            if change.get("deleted"):
+                by_article.pop(article_id, None)
+                deletions.add(article_id)
+                continue
+            article = change.get("article")
+            if isinstance(article, dict):
+                deletions.discard(article_id)
+                by_article[article_id] = self._strip_keys(article)
+        articles = sorted(by_article.values(), key=lambda item: int(item.get("updatedAt") or 0), reverse=True)
+        return {
+            "cursor": cursor,
+            "articles": articles,
+            "deletions": sorted(deletions),
+            "syncSource": "ledger",
+            "changes": len(changes),
+            "hasMore": has_more,
+        }
 
     def list_articles(self, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         filters = filters or {}
@@ -411,6 +497,7 @@ class RssStorage:
             return None
         if "tags" in updates:
             updates = {**updates, "tags": _normalize_tags(updates.get("tags"))}
+        before = dict(article)
         article.update(updates)
         article["updatedAt"] = now_ms()
         pk_item = {"pk": USER_PK, "sk": f"ARTICLE#{article_id}", **article}
@@ -419,6 +506,8 @@ class RssStorage:
             pk_item["gsi1pk"] = ARTICLES_GSI_PK
             pk_item["gsi1sk"] = f"{published_epoch:013d}#{article_id}"
         self.table.put_item(Item=_clean(pk_item))
+        self._adjust_feed_counts_for_article_transition(before, article)
+        self._record_article_sync(article)
         return article
 
     def list_highlights(self, article_id: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
@@ -585,6 +674,8 @@ class RssStorage:
         for article in self.list_articles({"limit": 1000}):
             if article.get("isRead") and not article.get("isSaved") and int(article.get("fetchedAt") or 0) < cutoff:
                 self.table.delete_item(Key={"pk": USER_PK, "sk": f"ARTICLE#{article['articleId']}"})
+                self._increment_feed_counts(str(article.get("sourceFeedId") or ""), total_delta=-1, unread_delta=0 if article.get("isRead") else -1)
+                self._record_article_deletion(str(article["articleId"]))
                 count += 1
         return count
 
@@ -791,6 +882,80 @@ class RssStorage:
         if excludes and any(term.lower() in haystack for term in excludes):
             return False
         return True
+
+    def _record_article_sync(self, article: dict[str, Any]) -> None:
+        article_id = str(article.get("articleId") or "")
+        if not article_id:
+            return
+        updated_at = int(article.get("updatedAt") or now_ms())
+        clean_article = self._strip_keys(article)
+        self.table.put_item(
+            Item=_clean(
+                {
+                    "pk": SYNC_PK,
+                    "sk": f"{updated_at:013d}#ARTICLE#{article_id}",
+                    "entityType": "article",
+                    "articleId": article_id,
+                    "updatedAt": updated_at,
+                    "deleted": False,
+                    "article": clean_article,
+                    "expiresAt": sync_ledger_expires_at(),
+                }
+            )
+        )
+
+    def _record_article_deletion(self, article_id: str) -> None:
+        if not article_id:
+            return
+        updated_at = now_ms()
+        self.table.put_item(
+            Item=_clean(
+                {
+                    "pk": SYNC_PK,
+                    "sk": f"{updated_at:013d}#ARTICLE#{article_id}",
+                    "entityType": "article",
+                    "articleId": article_id,
+                    "updatedAt": updated_at,
+                    "deleted": True,
+                    "expiresAt": sync_ledger_expires_at(),
+                }
+            )
+        )
+
+    def _adjust_feed_counts_for_article_transition(self, before: dict[str, Any], after: dict[str, Any]) -> None:
+        before_feed = str(before.get("sourceFeedId") or "")
+        after_feed = str(after.get("sourceFeedId") or "")
+        before_unread = not bool(before.get("isRead"))
+        after_unread = not bool(after.get("isRead"))
+        if before_feed != after_feed:
+            if before_feed:
+                self._increment_feed_counts(before_feed, total_delta=-1, unread_delta=-1 if before_unread else 0)
+            if after_feed:
+                self._increment_feed_counts(after_feed, total_delta=1, unread_delta=1 if after_unread else 0)
+            return
+        if before_feed and before_unread != after_unread:
+            self._increment_feed_counts(before_feed, unread_delta=1 if after_unread else -1)
+
+    def _increment_feed_counts(self, feed_id: str, *, total_delta: int = 0, unread_delta: int = 0) -> None:
+        if not feed_id or (not total_delta and not unread_delta):
+            return
+        names = {"#version": "feedCountVersion", "#updated": "feedCountsUpdatedAt"}
+        values: dict[str, Any] = {":version": FEED_COUNT_VERSION, ":updated": now_ms()}
+        add_parts: list[str] = []
+        if total_delta:
+            names["#articleCount"] = "articleCount"
+            values[":total"] = total_delta
+            add_parts.append("#articleCount :total")
+        if unread_delta:
+            names["#unreadCount"] = "unreadCount"
+            values[":unread"] = unread_delta
+            add_parts.append("#unreadCount :unread")
+        self.table.update_item(
+            Key={"pk": USER_PK, "sk": f"FEED#{feed_id}"},
+            UpdateExpression=f"SET #version = :version, #updated = :updated ADD {', '.join(add_parts)}",
+            ExpressionAttributeNames=names,
+            ExpressionAttributeValues=_clean(values),
+        )
 
     @staticmethod
     def _strip_keys(item: dict[str, Any]) -> dict[str, Any]:

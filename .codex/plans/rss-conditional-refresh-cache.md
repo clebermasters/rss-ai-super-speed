@@ -39,3 +39,25 @@
 ## Notes
 - The first refresh after deploying new code can still inspect many feeds because validators must be learned and stored.
 - Feeds that do not return or honor `ETag`/`Last-Modified` continue to fetch normally; they are visible as changed `ok` feeds in the response counters.
+
+## Phase 2: True Incremental Sync And Feed Count Cache
+
+### Acceptance Criteria
+- [x] Warm `/v1/sync/pull?since=...` uses a DynamoDB sync ledger instead of reading up to 1000 article records and filtering in Lambda.
+- [x] Article creates and mutations write compact sync ledger rows with DynamoDB TTL.
+- [x] Feed article/unread counts are persisted on feed records and updated incrementally.
+- [x] `/v1/bootstrap` no longer recomputes feed counts from article scans after the one-time feed-count migration.
+- [x] Cold sync fallback remains available with a bounded snapshot response.
+- [x] Tests cover persisted feed counts, sync ledger writes, and warm sync pulls.
+
+### Verification
+- `python -m pytest aws/tests/test_storage_feed_counts.py aws/tests/test_rss_refresh_cache.py -q` -> 19 passed.
+- `python -m pytest aws/tests -q` -> 72 passed, 3 skipped.
+- `npm run build` in `web/` -> passed.
+- `./build-android.sh release` -> passed.
+- `env -u AWS_PROFILE aws/scripts/deploy_backend.sh` -> deployed API Lambda and smoke tests passed.
+- Production measurements after deployment:
+  - `/v1/bootstrap`: 0.36s, 34 feeds, 34 feeds with persisted count version.
+  - Warm `/v1/sync/pull?since=now`: 0.21s, 114 bytes, `syncSource=ledger`, 0 articles.
+  - Cold bounded `/v1/sync/pull?since=0&limit=50`: 0.68s, 50 articles, `syncSource=snapshot`.
+  - `/v1/sync/refresh`: 9.28s, 24 feeds unchanged, 144 entries checked, 0 new articles saved.

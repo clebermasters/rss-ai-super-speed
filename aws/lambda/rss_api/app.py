@@ -99,8 +99,19 @@ def route(method: str, path: str, event: dict[str, Any]) -> dict[str, Any]:
 
     if method == "GET" and path == "/v1/sync/pull":
         since = int(_query_one(query, "since", "0") or 0)
-        articles = [article for article in storage.list_articles({"limit": 1000}) if int(article.get("updatedAt") or 0) > since]
-        return response(200, {"cursor": now_ms(), "articles": articles, "deletions": []})
+        limit = int(_query_one(query, "limit", "1000") or 1000)
+        result = storage.pull_article_changes(since, limit=limit, cursor=now_ms())
+        _log_event(
+            "sync_pull_completed",
+            since=since,
+            cursor=result.get("cursor"),
+            source=result.get("syncSource"),
+            articles=len(result.get("articles") or []),
+            deletions=len(result.get("deletions") or []),
+            changes=result.get("changes"),
+            hasMore=result.get("hasMore"),
+        )
+        return response(200, result)
 
     if method == "POST" and path == "/v1/sync/push":
         return response(200, handle_sync_push(storage, parse_json_body(event)))

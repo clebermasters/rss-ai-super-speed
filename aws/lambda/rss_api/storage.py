@@ -240,6 +240,13 @@ class RssStorage:
             "lastFetchedAt": payload.get("lastFetchedAt"),
             "lastFetchStatus": payload.get("lastFetchStatus"),
             "lastFetchError": payload.get("lastFetchError"),
+            "rssEtag": payload.get("rssEtag"),
+            "rssLastModified": payload.get("rssLastModified"),
+            "lastFetchHttpStatus": payload.get("lastFetchHttpStatus"),
+            "lastEntriesChecked": int(payload.get("lastEntriesChecked") or 0),
+            "lastNewArticlesSaved": int(payload.get("lastNewArticlesSaved") or 0),
+            "lastFetchUnchanged": bool(payload.get("lastFetchUnchanged", False)),
+            "lastFetchDurationMs": int(payload.get("lastFetchDurationMs") or 0),
             "articleCount": int(payload.get("articleCount") or 0),
             "unreadCount": int(payload.get("unreadCount") or 0),
             "createdAt": int(payload.get("createdAt") or now_ms()),
@@ -306,10 +313,16 @@ class RssStorage:
         self.table.delete_item(Key={"pk": USER_PK, "sk": f"FEED#{feed_id}"})
 
     def save_articles(self, articles: list[dict[str, Any]]) -> int:
+        return int(self.save_articles_detailed(articles).get("saved") or 0)
+
+    def save_articles_detailed(self, articles: list[dict[str, Any]]) -> dict[str, Any]:
         saved = 0
+        duplicate_count = 0
+        saved_by_feed: dict[str, int] = {}
         for article in articles:
             article_id = article.get("articleId") or stable_id(article["link"], "article-")
             published_epoch = int(article.get("publishedEpoch") or now_ms())
+            source_feed_id = article.get("sourceFeedId")
             item = {
                 "pk": USER_PK,
                 "sk": f"ARTICLE#{article_id}",
@@ -327,7 +340,7 @@ class RssStorage:
                 "publishedEpoch": published_epoch,
                 "source": article.get("source") or "Unknown",
                 "sourceUrl": article.get("sourceUrl") or "",
-                "sourceFeedId": article.get("sourceFeedId"),
+                "sourceFeedId": source_feed_id,
                 "score": article.get("score"),
                 "comments": article.get("comments"),
                 "tags": _normalize_tags(article.get("tags")),
@@ -344,10 +357,14 @@ class RssStorage:
                     ConditionExpression="attribute_not_exists(pk) AND attribute_not_exists(sk)",
                 )
                 saved += 1
+                if source_feed_id:
+                    feed_key = str(source_feed_id)
+                    saved_by_feed[feed_key] = saved_by_feed.get(feed_key, 0) + 1
             except ClientError as exc:
                 if exc.response.get("Error", {}).get("Code") != "ConditionalCheckFailedException":
                     raise
-        return saved
+                duplicate_count += 1
+        return {"saved": saved, "duplicates": duplicate_count, "savedByFeed": saved_by_feed}
 
     def list_articles(self, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         filters = filters or {}

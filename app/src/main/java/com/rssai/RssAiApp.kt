@@ -287,7 +287,10 @@ fun RssAiApp(openUrl: (String) -> Unit) {
                 persistCache()
                 result
             }.onSuccess {
-                status = "Background refresh complete · ${it.saved} new"
+                val newCount = if (it.newArticlesSaved > 0 || it.saved == 0) it.newArticlesSaved else it.saved
+                val checked = if (it.entriesChecked > 0 || it.fetched == 0) it.entriesChecked else it.fetched
+                val unchanged = if (it.feedsUnchanged > 0) " · ${it.feedsUnchanged} unchanged feeds" else ""
+                status = "Background refresh complete · $newCount new · $checked entries checked$unchanged"
             }.onFailure {
                 if (articles.isEmpty()) {
                     status = it.safeUserMessage("Background refresh failed")

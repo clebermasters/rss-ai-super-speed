@@ -280,20 +280,65 @@ def refresh_feeds(storage: RssStorage, feeds: list[dict[str, Any]] | None = None
             name=feed_result.get("name"),
             status=feed_result.get("status"),
             fetched=feed_result.get("fetched", 0),
+            entriesChecked=feed_result.get("entriesChecked", feed_result.get("fetched", 0)),
             limit=feed_result.get("limit"),
+            httpStatus=feed_result.get("httpStatus"),
+            conditionalRequest=feed_result.get("conditionalRequest", False),
+            unchanged=feed_result.get("unchanged", False),
+            durationMs=feed_result.get("durationMs"),
             error=feed_result.get("error"),
             level="ERROR" if feed_result.get("status") == "error" else "INFO",
         )
-    saved = storage.save_articles(articles)
+    save_details = storage.save_articles_detailed(articles)
+    saved = int(save_details.get("saved") or 0)
+    saved_by_feed = save_details.get("savedByFeed") or {}
+    feed_results_by_id = {str(result.get("feedId") or ""): result for result in feed_results}
+    refresh_finished_at = now_ms()
     for feed in feeds:
-        status = "error" if any(err.get("feedId") == feed.get("feedId") for err in errors) else "ok"
-        storage.update_feed(feed["feedId"], {"lastFetchedAt": now_ms(), "lastFetchStatus": status})
-    result = {"fetched": len(articles), "saved": saved, "errors": errors}
+        feed_id = str(feed.get("feedId") or "")
+        feed_result = feed_results_by_id.get(feed_id, {})
+        status = str(feed_result.get("status") or ("error" if any(err.get("feedId") == feed_id for err in errors) else "ok"))
+        updates = {
+            "lastFetchedAt": refresh_finished_at,
+            "lastFetchStatus": status,
+            "lastFetchError": feed_result.get("error"),
+            "lastFetchHttpStatus": feed_result.get("httpStatus"),
+            "lastEntriesChecked": int(feed_result.get("entriesChecked") or feed_result.get("fetched") or 0),
+            "lastNewArticlesSaved": int(saved_by_feed.get(feed_id, 0)),
+            "lastFetchUnchanged": bool(feed_result.get("unchanged", False)),
+            "lastFetchDurationMs": int(feed_result.get("durationMs") or 0),
+        }
+        if feed_result.get("etag"):
+            updates["rssEtag"] = feed_result.get("etag")
+        if feed_result.get("lastModified"):
+            updates["rssLastModified"] = feed_result.get("lastModified")
+        storage.update_feed(feed["feedId"], updates)
+    entries_checked = sum(int(result.get("entriesChecked") or result.get("fetched") or 0) for result in feed_results)
+    feeds_checked = sum(1 for result in feed_results if result.get("enabled", True))
+    feeds_unchanged = sum(1 for result in feed_results if result.get("unchanged"))
+    feeds_changed = sum(1 for result in feed_results if result.get("status") == "ok")
+    result = {
+        "fetched": entries_checked,
+        "saved": saved,
+        "entriesChecked": entries_checked,
+        "newArticlesSaved": saved,
+        "duplicateArticles": int(save_details.get("duplicates") or 0),
+        "feedsChecked": feeds_checked,
+        "feedsChanged": feeds_changed,
+        "feedsUnchanged": feeds_unchanged,
+        "errors": errors,
+        "feedResults": feed_results,
+    }
     _log_event(
         "feed_refresh_completed",
         feedCount=len(feeds),
-        fetched=len(articles),
+        fetched=entries_checked,
+        entriesChecked=entries_checked,
         savedNew=saved,
+        duplicateArticles=result["duplicateArticles"],
+        feedsChecked=feeds_checked,
+        feedsChanged=feeds_changed,
+        feedsUnchanged=feeds_unchanged,
         errorCount=len(errors),
         durationMs=_elapsed_ms(started_at),
         feedResults=feed_results,

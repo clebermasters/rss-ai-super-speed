@@ -188,5 +188,11 @@ export interface HighlightsResponse {
 export interface RefreshResponse {
   fetched: number;
   saved: number;
+  entriesChecked?: number;
+  newArticlesSaved?: number;
+  duplicateArticles?: number;
+  feedsChecked?: number;
+  feedsChanged?: number;
+  feedsUnchanged?: number;
   errors?: Array<{ name?: string; url?: string; error?: string }>;
 }

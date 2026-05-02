@@ -243,7 +243,7 @@ export function useRssReader() {
     refreshing.value = true;
     try {
       const result = selectedFeedId.value ? await client().refreshFeed(selectedFeedId.value) : await client().refresh();
-      notice.value = { kind: 'success', message: `Refresh complete: ${result.saved} new, ${result.fetched} fetched.` };
+      notice.value = { kind: 'success', message: refreshMessage('Refresh complete', result) };
       markOpenRefreshAttempt();
       await syncIncremental();
       const data = await client().bootstrap();
@@ -635,7 +635,7 @@ export function useRssReader() {
       await loadHighlights({ persist: false });
       await persistCache();
       applyArticleFilters({ preserveSelection: true });
-      notice.value = { kind: 'success', message: `Background refresh complete: ${result.saved} new, ${result.fetched} fetched.` };
+      notice.value = { kind: 'success', message: refreshMessage('Background refresh complete', result) };
     } catch (error) {
       if (!articles.value.length) handleError(error, 'Background refresh failed.');
     } finally {
@@ -651,6 +651,13 @@ export function useRssReader() {
 
   function markOpenRefreshAttempt(): void {
     localStorage.setItem(OPEN_REFRESH_STORAGE_KEY, String(Date.now()));
+  }
+
+  function refreshMessage(prefix: string, result: { saved: number; fetched: number; newArticlesSaved?: number; entriesChecked?: number; feedsUnchanged?: number }): string {
+    const newCount = result.newArticlesSaved ?? result.saved;
+    const checked = result.entriesChecked ?? result.fetched;
+    const unchanged = result.feedsUnchanged ? `, ${result.feedsUnchanged} unchanged feeds` : '';
+    return `${prefix}: ${newCount} new, ${checked} entries checked${unchanged}.`;
   }
 
   async function persistCache(): Promise<void> {

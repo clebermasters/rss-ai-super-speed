@@ -151,7 +151,16 @@ data class ProvidersResponse(val providers: List<ProviderInfo> = emptyList())
 data class CodexAuthResponse(val configured: Boolean = false, val s3Key: String = "")
 
 @Serializable
-data class RefreshResponse(val fetched: Int = 0, val saved: Int = 0)
+data class RefreshResponse(
+    val fetched: Int = 0,
+    val saved: Int = 0,
+    val entriesChecked: Int = 0,
+    val newArticlesSaved: Int = 0,
+    val duplicateArticles: Int = 0,
+    val feedsChecked: Int = 0,
+    val feedsChanged: Int = 0,
+    val feedsUnchanged: Int = 0,
+)
 
 @Serializable
 data class DeleteFeedResponse(val deleted: Boolean = false)

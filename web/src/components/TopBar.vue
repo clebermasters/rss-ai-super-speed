@@ -13,6 +13,7 @@ defineEmits<{
   flow: [];
   highlights: [];
   refresh: [];
+  shortcuts: [];
   settings: [];
 }>();
 </script>
@@ -38,6 +39,7 @@ defineEmits<{
       <button class="icon-button" :disabled="loading || !configured" @click="$emit('refresh')" title="Refresh feeds">
         <span :class="{ spin: loading }">↻</span>
       </button>
+      <button class="icon-button" aria-label="Keyboard shortcuts" @click="$emit('shortcuts')" title="Keyboard shortcuts">⌘</button>
       <button class="icon-button" @click="$emit('settings')" title="Settings">⚙</button>
     </div>
   </header>

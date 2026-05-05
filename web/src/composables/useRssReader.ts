@@ -81,6 +81,7 @@ export function useRssReader() {
   const busyAction = ref('');
   const notice = ref<Notice | null>(null);
   const showSettings = ref(false);
+  const initialized = ref(false);
   const audioUrl = ref('');
   const audioLabel = ref('');
   const speechSegmentPercent = ref(DEFAULT_SEGMENT_PERCENT);
@@ -129,10 +130,12 @@ export function useRssReader() {
       await hydrateFromCache();
       showSettings.value = true;
       notice.value = { kind: 'info', message: 'Add the backend API URL and token to start reading.' };
+      initialized.value = true;
       return;
     }
     await hydrateFromCache();
     await bootstrap();
+    initialized.value = true;
   }
 
   async function bootstrap(): Promise<void> {
@@ -306,6 +309,31 @@ export function useRssReader() {
     } catch (error) {
       handleError(error, 'Unable to update saved state.');
     }
+  }
+
+  async function markArticleRead(article: Article): Promise<void> {
+    if (!article || article.isRead) return;
+    busyAction.value = 'Marking read';
+    try {
+      const updated = await client().markRead(article.articleId);
+      replaceArticle({ ...article, ...updated });
+      if (selectedArticle.value?.articleId === article.articleId) {
+        selectedArticle.value = { ...selectedArticle.value, ...updated };
+      }
+      if (updated.isRead) updateFeedUnread(article.sourceFeedId || updated.sourceFeedId || '', -1);
+      await persistCache();
+      notice.value = { kind: 'success', message: 'Article marked as read.' };
+    } catch (error) {
+      handleError(error, 'Unable to mark article as read.');
+    } finally {
+      busyAction.value = '';
+    }
+  }
+
+  async function markSelectedRead(): Promise<void> {
+    const article = selectedArticle.value;
+    if (!article) return;
+    await markArticleRead(article);
   }
 
   async function loadHighlights(options: { persist?: boolean } = {}): Promise<void> {
@@ -576,10 +604,13 @@ export function useRssReader() {
   }
 
   function refreshFeedCounts(): void {
-    const sourceId = selectedArticle.value?.sourceFeedId;
+    updateFeedUnread(selectedArticle.value?.sourceFeedId || '', -1);
+  }
+
+  function updateFeedUnread(sourceId: string, delta: number): void {
     feeds.value = feeds.value.map((feed) => {
-      if (!sourceId || feed.feedId !== sourceId || feed.unreadCount <= 0) return feed;
-      return { ...feed, unreadCount: feed.unreadCount - 1 };
+      if (!sourceId || feed.feedId !== sourceId) return feed;
+      return { ...feed, unreadCount: Math.max(0, feed.unreadCount + delta) };
     });
   }
 
@@ -752,7 +783,10 @@ export function useRssReader() {
     formatContent,
     deleteHighlight,
     highlights,
+    initialized,
     loading,
+    markArticleRead,
+    markSelectedRead,
     notice,
     playSpeech,
     query,

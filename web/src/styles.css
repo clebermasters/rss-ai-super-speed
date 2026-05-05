@@ -1587,6 +1587,49 @@ h2 {
   width: min(620px, 100%);
 }
 
+.shortcuts-modal {
+  width: min(560px, 100%);
+}
+
+.shortcut-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.shortcut-row {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border: 1px solid var(--outline, var(--line));
+  border-radius: var(--radius-md);
+  background: var(--surface-high, rgba(255, 255, 255, 0.55));
+  color: var(--text-soft, var(--ink));
+  font-weight: 800;
+}
+
+.shortcut-keys {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  align-items: center;
+}
+
+kbd {
+  display: inline-grid;
+  min-width: 30px;
+  min-height: 28px;
+  place-items: center;
+  border: 1px solid var(--outline-strong, var(--line));
+  border-radius: 6px;
+  padding: 3px 7px;
+  color: var(--text, var(--ink));
+  background: var(--surface-highest, rgba(255, 252, 244, 0.88));
+  font: 800 0.84rem "Geist", "Segoe UI", sans-serif;
+}
+
 .tag-editor-field {
   display: grid;
   gap: 8px;

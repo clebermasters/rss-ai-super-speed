@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { isFreshlyPublished, publishedAgo } from '../freshness';
 import { plainDate, richTextToHtml } from '../render';
 import type { Article } from '../types';
 
-const props = defineProps<{ articles: Article[]; brandNewArticleIds: Set<string>; loading: boolean; selectedTag: string }>();
+const props = defineProps<{ activeArticleId: string; articles: Article[]; brandNewArticleIds: Set<string>; loading: boolean; selectedTag: string }>();
 defineEmits<{
   focus: [article: Article];
   listen: [article: Article, target: 'content' | 'summary'];
@@ -53,6 +53,25 @@ watch(
   },
 );
 
+watch(
+  () => props.activeArticleId,
+  async (articleId) => {
+    if (!articleId) return;
+    const index = props.articles.findIndex((article) => article.articleId === articleId);
+    if (index < 0) return;
+    if (index >= visibleCount.value) visibleCount.value = Math.min(index + 1, props.articles.length);
+    await nextTick();
+    findFlowArticleElement(articleId)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  },
+);
+
+function findFlowArticleElement(articleId: string): HTMLElement | null {
+  if (typeof CSS !== 'undefined' && CSS.escape) {
+    return document.querySelector<HTMLElement>(`[data-flow-article-id="${CSS.escape(articleId)}"]`);
+  }
+  return [...document.querySelectorAll<HTMLElement>('[data-flow-article-id]')].find((element) => element.dataset.flowArticleId === articleId) || null;
+}
+
 onMounted(() => {
   observer = new IntersectionObserver(
     (entries) => {
@@ -81,7 +100,7 @@ onBeforeUnmount(() => observer?.disconnect());
       <div v-for="item in 5" :key="item" class="skeleton-card" />
     </div>
 
-    <article v-for="(article, index) in visibleArticles" v-else :key="article.articleId" class="flow-article" :class="{ unread: !article.isRead, 'brand-new': brandNewArticleIds.has(article.articleId), fresh: isFreshlyPublished(article.publishedAt) }">
+    <article v-for="(article, index) in visibleArticles" v-else :key="article.articleId" class="flow-article" :class="{ active: activeArticleId === article.articleId, unread: !article.isRead, 'brand-new': brandNewArticleIds.has(article.articleId), fresh: isFreshlyPublished(article.publishedAt) }" :data-flow-article-id="article.articleId">
       <div class="flow-index">{{ index + 1 }}</div>
       <div class="flow-content">
         <p class="eyebrow">{{ article.source }}</p>
